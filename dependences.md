@@ -1,0 +1,1 @@
+npm install @azure/msal-react @azure/msal-browser react-markdown recharts
