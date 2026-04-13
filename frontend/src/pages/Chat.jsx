@@ -1,36 +1,35 @@
 import { useState, useRef, useEffect } from 'react'
-import ChatHeader from './ChatHeader'
-import MessageList from './MessageList'
-import MessageInput from './MessageInput'
+import MessageList from '../components/MessageList'
+import MessageInput from '../components/MessageInput'
 
 const ChatInterface = () => {
   const [messages, setMessages] = useState([
-    { 
+    {
       id: 1,
-      role: 'assistant', 
-      content: '👋 ¡Hola! Soy tu asistente de infraestructura de Novasoft.\n\nPuedo ayudarte con:\n• 📊 **Consultas a bases de datos SQL**\n• 🖥️ **Gestión de Virtual Machines**\n• 📈 **Métricas y rendimiento**\n\n¿Qué necesitas hoy?' 
+      role: 'assistant',
+      content: '👋 ¡Hola! Soy tu asistente de infraestructura de Novasoft.\n\nPuedo ayudarte con consultas y gráficas de datos de SQL 📶\n\n¿Qué necesitas hoy?'
     }
   ])
-  
+
   const [isLoading, setIsLoading] = useState(false)
   const [inputValue, setInputValue] = useState('')
 
   const handleSend = () => {
     if (!inputValue.trim() || isLoading) return
-    
+
     // Por ahora solo muestra el mensaje del usuario sin respuesta real
     const newMessage = {
       id: Date.now(),
       role: 'user',
       content: inputValue
     }
-    
+
     setMessages(prev => [...prev, newMessage])
     setInputValue('')
-    
+
     // Simular que la IA está "pensando"
     setIsLoading(true)
-    
+
     // Simular respuesta después de 1 segundo
     setTimeout(() => {
       const assistantMessage = {
@@ -45,12 +44,24 @@ const ChatInterface = () => {
 
   return (
     <div className="app-container">
-      <ChatHeader />
-      <MessageList 
-        messages={messages} 
-        isLoading={isLoading} 
+      <header className="chat-header">
+        <div className="chat-header-left">
+          <h1>
+          Asistente Virtual
+        </h1>
+        <p>Conectado a MCP Server • Preview</p>
+        </div>
+        <div className="chat-header-right">
+          
+          <span>Pepito Perez</span>
+        </div>
+        
+      </header>
+      <MessageList
+        messages={messages}
+        isLoading={isLoading}
       />
-      <MessageInput 
+      <MessageInput
         value={inputValue}
         onChange={setInputValue}
         onSend={handleSend}
