@@ -1,0 +1,89 @@
+
+/* ===== INPUT AREA - Estilo moderno ===== */
+.message-input-area {
+  flex-shrink: 0;
+  background: var(--color-bg-secondary);
+  border-top: 1px solid #016b28;
+  padding: 1rem 2rem 1.5rem;
+
+}
+
+.input-container {
+  display: flex;
+  gap: 0.75rem;
+  align-items: center;
+  background: #1a202c;
+  border-radius: 3rem;
+  padding: 0.25rem 0.25rem 0.25rem 1.25rem;
+  border: 1px solid var(--color-border);
+  transition: all 0.2s ease;
+}
+
+.input-container:focus-within {
+  border-color:  #00a452;
+  box-shadow: 0 0 0 2px rgba(0, 120, 212, 0.2);
+}
+
+.message-input {
+  flex: 1;
+  background: transparent;
+  border: none;
+  padding: 0.875rem 0;
+  font-size: 0.9rem;
+  font-family: inherit;
+  color: var(--color-text-primary);
+  outline: none;
+}
+
+.message-input::placeholder {
+  color: var(--color-text-secondary);
+}
+
+.message-input:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.send-button {
+  background: linear-gradient(135deg,  #00a452, #016b28);
+  color: white;
+  border: none;
+  padding: 0.625rem 1.5rem;
+  border-radius: 2rem;
+  font-weight: 600;
+  font-size: 0.85rem;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.send-button:hover:not(:disabled) {
+  transform: scale(1.02);
+  background: linear-gradient(135deg, #016b28, #00a452);
+  box-shadow: 0 2px 8px rgba(0, 120, 212, 0.4);
+}
+
+.send-button:disabled {
+  background: var(--color-border);
+  cursor: not-allowed;
+  transform: none;
+  box-shadow: none;
+}
+
+.input-footer {
+  margin-top: 0.75rem;
+  text-align: center;
+  font-size: 0.7rem;
+  color: var(--color-text-secondary);
+  display: flex;
+  justify-content: center;
+  gap: 1rem;
+}
+
+.input-footer span {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+}

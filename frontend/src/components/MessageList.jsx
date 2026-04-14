@@ -1,5 +1,6 @@
 import { useRef, useEffect } from 'react'
 import MessageBubble from './MessageBubble'
+import '../styles/MessageList.css'
 
 const MessageList = ({ messages, isLoading }) => {
   const messagesEndRef = useRef(null)

@@ -1,0 +1,91 @@
+
+/* ===== HEADER ===== */
+.chat-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  background: rgba(18, 25, 40, 0.95);
+  backdrop-filter: blur(10px);
+  border-bottom: 1px solid rgba(66, 153, 225, 0.3);
+  padding: 1rem 2rem;
+  flex-shrink: 0;
+  position: sticky;
+  top: 0;
+  left: 0;
+  right: 0;
+}
+
+/*Linea de gradiente en el header del chat*/
+.chat-header::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 2px;
+  background: linear-gradient(90deg, #00d78c,  #00a452, #016b28, #016927);
+}
+
+.chat-header h1 {
+  font-size: 1.35rem;
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  gap: 0.65rem;
+  letter-spacing: -0.3px;
+}
+.chat-header span {
+  font-size: 0.9rem;
+  letter-spacing: -0.3px;
+}
+
+
+
+.chat-header p {
+  font-size: 0.75rem;
+  color: var(--color-text-secondary);
+  margin-top: 0.3rem;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.chat-header-right {
+  display: flex;
+  align-items: center;
+}
+.user-info {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+.user-avatar {
+  width: 2.5rem;
+  height: 2.5rem;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  font-size: 0.82rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  color: #d9ffe8;
+  background: var(--color-avatar);
+  border: 1px solid rgba(0, 213, 102, 0.8);
+  box-shadow:
+    0 0 0 2px rgba(0, 213, 102, 0.14),
+    0 0 16px rgba(0, 213, 102, 0.42),
+    inset 0 0 10px rgba(1, 46, 22, 0.45);
+}
+
+
+/*circulito de pueba de conexion al MCP*/
+.chat-header p::before {
+  content: '';
+  width: 8px;
+  height: 8px;
+  background: #00c853;
+  border-radius: 50%;
+  display: inline-block;
+  box-shadow: 0 0 6px #00c853;
+}
