@@ -1,4 +1,5 @@
 import MetricsChart from './MetricsChart'
+import '../styles/MessageBubble.css'
 
 const MessageBubble = ({ message }) => {
   const isUser = message.role === 'user'

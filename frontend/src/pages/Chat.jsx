@@ -1,8 +1,11 @@
 import { useState, useRef, useEffect } from 'react'
+import ChatHeader from '../components/ChatHeader'
 import MessageList from '../components/MessageList'
 import MessageInput from '../components/MessageInput'
 
 const ChatInterface = () => {
+  
+
   const [messages, setMessages] = useState([
     {
       id: 1,
@@ -44,19 +47,8 @@ const ChatInterface = () => {
 
   return (
     <div className="app-container">
-      <header className="chat-header">
-        <div className="chat-header-left">
-          <h1>
-          Asistente Virtual
-        </h1>
-        <p>Conectado a MCP Server • Preview</p>
-        </div>
-        <div className="chat-header-right">
-          
-          <span>Pepito Perez</span>
-        </div>
-        
-      </header>
+      <ChatHeader/>
+      
       <MessageList
         messages={messages}
         isLoading={isLoading}

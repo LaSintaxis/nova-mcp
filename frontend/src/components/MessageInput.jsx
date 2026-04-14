@@ -1,3 +1,4 @@
+import '../styles/MessageInput.css'
 const MessageInput = ({ value, onChange, onSend, isLoading }) => {
   const handleKeyPress = (e) => {
     if (e.key === 'Enter' && !e.shiftKey) {

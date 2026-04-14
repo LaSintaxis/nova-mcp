@@ -1,5 +1,6 @@
 import { useNavigate } from 'react-router-dom'
 import { useState } from 'react'
+import '../styles/Login.css'
 
 const Login = () => {
   const navigate = useNavigate()
@@ -32,15 +33,15 @@ const Login = () => {
             <img className="login-logo" src="../public/nova-logo.jpg" alt="" />
             
             <p className="login-subtitle">Asistente Virtual de Infraestructura</p>
+            
           </div>
 
-          {/* Divider */}
-          <div className="login-divider"></div>
+          <br />
 
           {/* Contenido principal */}
           <div className="login-body">
             <p className="login-description">
-              Accede con tu cuenta corporativa de Microsoft Entra ID para comenzar
+              Acceda con su cuenta corporativa de Microsoft para comenzar
             </p>
 
             {/* Botón Microsoft Login */}
@@ -64,7 +65,7 @@ const Login = () => {
                 <path d="M8 1L2 4v4c0 3.31 4 6 6 6s6-2.69 6-6V4l-6-3z" stroke="currentColor" strokeWidth="1.5" fill="none"/>
                 <path d="M5 8l2 2 4-4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
               </svg>
-              <span>Tus datos están protegidos por Azure AD</span>
+              <span>Sus datos están protegidos por Azure AD</span>
             </div>
           </div>
 
@@ -76,27 +77,27 @@ const Login = () => {
 
         {/* Panel informativo derecho */}
         <div className="login-features">
-          <h2>Características</h2>
+          <h2>Lorem</h2>
           <div className="features-list">
             <div className="feature-item">
               <div className="feature-icon">📊</div>
               <div>
-                <h3>Consultas SQL</h3>
-                <p>Accede a datos en tiempo real</p>
+                <h3>Lorem Ipsum</h3>
+                <p>Lorem ipsum dolor sit amet, consectetur adipiscing elit.</p>
               </div>
             </div>
             <div className="feature-item">
               <div className="feature-icon">🖥️</div>
               <div>
-                <h3>VM Management</h3>
-                <p>Gestiona máquinas virtuales</p>
+                <h3>Lorem Ipsum</h3>
+                <p>Lorem ipsum dolor sit amet, consectetur adipiscing elit.</p>
               </div>
             </div>
             <div className="feature-item">
               <div className="feature-icon">📈</div>
               <div>
-                <h3>Análisis</h3>
-                <p>Visualiza métricas y reportes</p>
+                <h3>Lorem Ipsum</h3>
+                <p>Lorem ipsum dolor sit amet, consectetur adipiscing elit.</p>
               </div>
             </div>
           </div>
