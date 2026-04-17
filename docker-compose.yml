@@ -1,0 +1,54 @@
+services:
+  backend:
+    build: ./backend
+    ports:
+      - "3000:3000"
+    healthcheck:
+      test: ["CMD", "node", "-e", "require('http').get('http://localhost:3000/health',res=>process.exit(res.statusCode===200?0:1)).on('error',()=>process.exit(1))"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    depends_on:
+      gateway:
+        condition: service_healthy
+
+  context-resolver:
+    build: ./context-resolver
+    ports:
+      - "6000:6000"
+    healthcheck:
+      test: ["CMD", "node", "-e", "require('http').get('http://localhost:6000/health',res=>process.exit(res.statusCode===200?0:1)).on('error',()=>process.exit(1))"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  gateway:
+    build: ./gateway
+    ports:
+      - "4000:4000"
+    env_file:
+      - ./gateway/.env
+    healthcheck:
+      test: ["CMD", "node", "-e", "require('http').get('http://localhost:4000/health',res=>process.exit(res.statusCode===200?0:1)).on('error',()=>process.exit(1))"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    depends_on:
+      mcp-sql:
+        condition: service_healthy
+      context-resolver:
+        condition: service_healthy
+
+  mcp-sql:
+    build: ./mcp-sql
+    ports:
+      - "5000:5000"
+    healthcheck:
+      test: ["CMD", "node", "-e", "require('http').get('http://localhost:5000/health',res=>process.exit(res.statusCode===200?0:1)).on('error',()=>process.exit(1))"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 10s

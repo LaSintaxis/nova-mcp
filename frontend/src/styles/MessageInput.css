@@ -45,31 +45,71 @@
 }
 
 .send-button {
-  background: linear-gradient(135deg,  #00a452, #016b28);
-  color: white;
-  border: none;
-  padding: 0.625rem 1.5rem;
-  border-radius: 2rem;
-  font-weight: 600;
-  font-size: 0.85rem;
+  width: 2.65rem;
+  height: 2.65rem;
+  background: rgba(148, 163, 184, 0.14);
+  color: #9fb0c7;
+  border: 1px solid rgba(148, 163, 184, 0.26);
+  padding: 0;
+  border-radius: 999px;
   cursor: pointer;
   transition: all 0.2s ease;
   display: flex;
   align-items: center;
-  gap: 0.5rem;
+  justify-content: center;
+}
+
+.send-button:not(:disabled) {
+  background: rgba(0, 164, 82, 0.14);
+  color: #8ff7ba;
+  border-color: rgba(0, 213, 102, 0.45);
+  box-shadow: inset 0 0 0 1px rgba(0, 213, 102, 0.08);
 }
 
 .send-button:hover:not(:disabled) {
-  transform: scale(1.02);
-  background: linear-gradient(135deg, #016b28, #00a452);
-  box-shadow: 0 2px 8px rgba(0, 120, 212, 0.4);
+  transform: translateY(-1px);
+  background: rgba(0, 164, 82, 0.26);
+  color: #d9ffe8;
+  border-color: rgba(0, 213, 102, 0.82);
+  box-shadow: 0 0 12px rgba(0, 213, 102, 0.32);
+}
+
+.send-button:focus-visible {
+  outline: none;
+  background: rgba(0, 164, 82, 0.32);
+  color: #edfff5;
+  border-color: rgba(0, 213, 102, 0.95);
+  box-shadow:
+    0 0 0 2px rgba(0, 213, 102, 0.22),
+    0 0 14px rgba(0, 213, 102, 0.35);
+}
+
+.send-button:active:not(:disabled) {
+  transform: translateY(0);
+  background: rgba(0, 164, 82, 0.4);
+  color: #f3fff8;
+  border-color: #00d566;
+  box-shadow: 0 0 18px rgba(0, 213, 102, 0.28);
 }
 
 .send-button:disabled {
-  background: var(--color-border);
+  background: rgba(51, 65, 85, 0.55);
+  color: rgba(148, 163, 184, 0.75);
+  border-color: rgba(71, 85, 105, 0.65);
   cursor: not-allowed;
   transform: none;
   box-shadow: none;
+}
+
+.send-button svg {
+  width: 1.15rem;
+  height: 1.15rem;
+  transition: transform 0.2s ease;
+}
+
+.send-button:hover:not(:disabled) svg,
+.send-button:focus-visible svg {
+  transform: translateX(1px) translateY(-1px);
 }
 
 .input-footer {
@@ -82,8 +122,14 @@
   gap: 1rem;
 }
 
-.input-footer span {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.3rem;
+/*circulito de pueba de conexion al MCP*/
+.input-footer p::before {
+  content: '';
+  width: 8px;
+  height: 8px;
+  margin-right: 0.4rem;
+  background: #00c853;
+  border-radius: 50%;
+  display: inline-block;
+  box-shadow: 0 0 6px #00c853;
 }
