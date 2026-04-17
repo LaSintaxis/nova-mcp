@@ -18,7 +18,7 @@ const Login = () => {
 
   return (
     <div className="login-container">
-      {/* Fondo decorativo con gradiente */}
+      {/* Fondo oscuro con dos burbujas algo blancas en las esquinas */}
       <div className="login-background">
         <div className="gradient-orb gradient-orb-1"></div>
         <div className="gradient-orb gradient-orb-2"></div>
@@ -26,7 +26,7 @@ const Login = () => {
 
       {/* Contenedor principal */}
       <div className="login-content">
-        {/* Card de Login */}
+        {/* Carta de Login */}
         <div className="login-card">
           {/* Header con logo/titulo */}
           <div className="login-header">

@@ -4,13 +4,11 @@ import MessageList from '../components/MessageList'
 import MessageInput from '../components/MessageInput'
 
 const ChatInterface = () => {
-  
-
   const [messages, setMessages] = useState([
     {
       id: 1,
       role: 'assistant',
-      content: '👋 ¡Hola! Soy tu asistente de infraestructura de Novasoft.\n\nPuedo ayudarte con consultas y gráficas de datos de SQL 📶\n\n¿Qué necesitas hoy?'
+      content: '¡Hola! Soy tu asistente de infraestructura de Novasoft.\n\nPuedo ayudarte con:\n 📊 Consultas y gráficas de datos de SQL\n 🖥️ Estado de servidores y máquinas virtuales \n\n¿Qué necesitas hoy?'
     }
   ])
 

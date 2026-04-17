@@ -10,7 +10,7 @@
   --color-bg-secondary: #0f1419;
   --color-bg-message-user: linear-gradient(90deg, #088134, #016927);
   --color-bg-message-assistant: #1e293b;
-  --color-avatar: radial-gradient(circle at 30% 30%, #00d566, #016b28 72%);
+  --color-avatar: radial-gradient(circle at 30% 30%, #00b156, #006826 72%);
   --color-text-primary: #e1e4e8;
   --color-text-secondary: #8a94a6;
   --color-accent: #26b82b;
@@ -38,12 +38,6 @@ body {
 
 
 
-
-
-
-
-
-
 /* ===== UTILIDADES ===== */
 .text-muted {
   color: var(--color-text-secondary);
@@ -51,18 +45,6 @@ body {
 
 .text-small {
   font-size: 0.7rem;
-}
-
-/* ===== ANIMACIONES ===== */
-@keyframes fadeSlideUp {
-  from {
-    opacity: 0;
-    transform: translateY(12px);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
 }
 
 
@@ -75,8 +57,8 @@ body {
   .chat-header h1 {
     font-size: 1.1rem;
   }
-  .chat-header span {
-    font-size: 0.8rem;
+  .chat-header .user-info .user-name {
+    display: none;
   }
   
   .message-list {

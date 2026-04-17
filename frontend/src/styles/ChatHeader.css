@@ -7,12 +7,17 @@
   background: rgba(18, 25, 40, 0.95);
   backdrop-filter: blur(10px);
   border-bottom: 1px solid rgba(66, 153, 225, 0.3);
-  padding: 1rem 2rem;
+  padding: 0.7rem 2rem;
   flex-shrink: 0;
   position: sticky;
   top: 0;
   left: 0;
   right: 0;
+}
+
+.chat-header > div > img {
+  width: 11rem;
+  height: 2.8rem;
 }
 
 /*Linea de gradiente en el header del chat*/
@@ -34,10 +39,6 @@
   gap: 0.65rem;
   letter-spacing: -0.3px;
 }
-.chat-header span {
-  font-size: 0.9rem;
-  letter-spacing: -0.3px;
-}
 
 
 
@@ -50,14 +51,34 @@
   gap: 0.5rem;
 }
 
-.chat-header-right {
+
+.user-info {
+  position: relative;
   display: flex;
   align-items: center;
 }
-.user-info {
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
+
+.user-info-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.65rem;
+  background: transparent;
+  border: none;
+  color: var(--color-text-primary);
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+
+.user-name {
+  font-size: 0.9rem;
+  font-weight: 500;
+}
+
+.user-caret {
+  font-size: 0.7rem;
+  color: var(--color-text-secondary);
+  transform: translateY(-1px);
 }
 
 .user-avatar {
@@ -78,14 +99,50 @@
     inset 0 0 10px rgba(1, 46, 22, 0.45);
 }
 
-
-/*circulito de pueba de conexion al MCP*/
-.chat-header p::before {
-  content: '';
-  width: 8px;
-  height: 8px;
-  background: #00c853;
-  border-radius: 50%;
-  display: inline-block;
-  box-shadow: 0 0 6px #00c853;
+.user-dropdown {
+  position: absolute;
+  top: calc(100% + 0.65rem);
+  right: 0;
+  min-width: 220px;
+  border-radius: 1rem;
+  background: rgba(24, 36, 62, 0.98);
+  border: 1px solid rgba(0, 213, 102, 0.16);
+  box-shadow: 0 18px 50px rgba(0, 0, 0, 0.45);
+  z-index: 20;
 }
+
+
+.user-dropdown-item {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  background: transparent;
+  border: none;
+  color: var(--color-text-primary);
+  padding: 0.8rem 0.85rem;
+  border-radius: 0.7rem;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  text-align: left;
+}
+
+.user-dropdown-item svg {
+  width: 1rem;
+  height: 1rem;
+  color: #8ff7ba;
+  flex-shrink: 0;
+}
+
+
+.user-dropdown-item:hover,
+.user-dropdown-item:focus-visible {
+  outline: none;
+  background: rgba(0, 164, 82, 0.14);
+  color: #eafff2;
+}
+
+
+
+
+
