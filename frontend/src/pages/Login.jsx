@@ -1,50 +1,56 @@
-import { useNavigate } from 'react-router-dom'
-import { useState } from 'react'
-import '../styles/Login.css'
+import { useMsal } from '@azure/msal-react';
+import { useState } from 'react';
+import { useNavigate } from 'react-router-dom';
+import '../styles/Login.css';
 
 const Login = () => {
-  const navigate = useNavigate()
-  const [isLoading, setIsLoading] = useState(false)
+  const { instance } = useMsal();
+  const navigate = useNavigate();
+  const [isLoading, setIsLoading] = useState(false);
 
   const handleMicrosoftLogin = async () => {
-    setIsLoading(true)
-    // Aquí irá la autenticación de Microsoft Entra ID
-    // Por ahora solo simula la carga
-    setTimeout(() => {
-      navigate('/chat')
-      setIsLoading(false)
-    }, 1000)
-  }
+    setIsLoading(true);
+    
+    try {
+      // Login con Microsoft Entra ID
+      const loginResponse = await instance.loginPopup({
+        scopes: ['User.Read', 'openid', 'profile']
+      });
+      
+      // Si llegamos aquí, el login fue exitoso
+      console.log('Usuario autenticado:', loginResponse.account);
+      navigate('/chat');
+      
+    } catch (error) {
+      console.error('Error en login:', error);
+      setIsLoading(false);
+      
+      // Mostrar error al usuario
+      alert('Error al iniciar sesión: ' + (error.errorMessage || error.message));
+    }
+  };
 
   return (
     <div className="login-container">
-      {/* Fondo oscuro con dos burbujas algo blancas en las esquinas */}
       <div className="login-background">
         <div className="gradient-orb gradient-orb-1"></div>
         <div className="gradient-orb gradient-orb-2"></div>
       </div>
 
-      {/* Contenedor principal */}
       <div className="login-content">
-        {/* Carta de Login */}
         <div className="login-card">
-          {/* Header con logo/titulo */}
           <div className="login-header">
-            <img className="login-logo" src="../public/nova-logo.jpg" alt="" />
-            
+            <img className="login-logo" src="/nova-logo.jpg" alt="Nova Logo" />
             <p className="login-subtitle">Asistente Virtual de Infraestructura</p>
-            
           </div>
 
           <br />
 
-          {/* Contenido principal */}
           <div className="login-body">
             <p className="login-description">
               Acceda con su cuenta corporativa de Microsoft para comenzar
             </p>
 
-            {/* Botón Microsoft Login */}
             <button 
               className="microsoft-login-button"
               onClick={handleMicrosoftLogin}
@@ -59,7 +65,6 @@ const Login = () => {
               {isLoading ? 'Conectando...' : 'Iniciar sesión con Microsoft'}
             </button>
 
-            {/* Info de seguridad */}
             <div className="login-security-info">
               <svg width="16" height="16" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
                 <path d="M8 1L2 4v4c0 3.31 4 6 6 6s6-2.69 6-6V4l-6-3z" stroke="currentColor" strokeWidth="1.5" fill="none"/>
@@ -69,13 +74,11 @@ const Login = () => {
             </div>
           </div>
 
-          {/* Footer */}
           <div className="login-footer">
             <p>© 2026 Novasoft. Todos los derechos reservados.</p>
           </div>
         </div>
 
-        {/* Panel informativo derecho */}
         <div className="login-features">
           <h2>Lorem</h2>
           <div className="features-list">
@@ -104,7 +107,7 @@ const Login = () => {
         </div>
       </div>
     </div>
-  )
-}
+  );
+};
 
-export default Login
+export default Login;

@@ -51,6 +51,43 @@ ${message}
 }
 
 
+// Agrega esta función después de generateSQL
+
+async function detectChartIntent(message) {
+  const prompt = `
+Eres un clasificador. Determina si el usuario QUIERE EXPLÍCITAMENTE una gráfica.
+
+Palabras clave que indican gráfica:
+- "gráfica", "gráfico", "grafica", "grafico"
+- "chart", "graph"
+- "visualiza", "visualización"
+- "muéstrame en forma de gráfica"
+- "dibuja", "plot"
+
+Responde SOLO con "true" o "false". Nada más.
+
+Mensaje: "${message}"
+`;
+
+  const response = await fetch("https://api.openai.com/v1/chat/completions", {
+    method: "POST",
+    headers: {
+      "Authorization": `Bearer ${process.env.OPENAI_API_KEY}`,
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({
+      model: "gpt-4o-mini",
+      messages: [{ role: "user", content: prompt }],
+      temperature: 0.1
+    })
+  });
+
+  const data = await response.json();
+  const result = data.choices[0].message.content.trim().toLowerCase();
+  return result === "true";
+}
+
+
 
 app.get("/health", (_req, res) => {
   res.status(200).json({
@@ -145,12 +182,15 @@ app.post("/execute", async (req, res) => {
 
     const data = await response.json();
 
-    // 🔹 5. Responder al backend
+    const wantsChart = await detectChartIntent(message);
+
     res.json({
       type: "success",
       target,
       query,
-      data
+      data: data.data,
+      wantsChart: wantsChart,  // ← Agrega esto
+      chartSuggestion: data.chartSuggestion  // ← Y esto
     });
 
   } catch (error) {
