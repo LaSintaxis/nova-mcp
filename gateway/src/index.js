@@ -3,8 +3,46 @@ import fetch from "node-fetch";
 import dotenv from "dotenv";
 dotenv.config();
 
+const AZURE_OPENAI_ENDPOINT = process.env.AZURE_OPENAI_ENDPOINT;
+const AZURE_OPENAI_API_KEY = process.env.AZURE_OPENAI_API_KEY;
+const AZURE_OPENAI_DEPLOYMENT = process.env.AZURE_OPENAI_DEPLOYMENT || "gpt-4.1-mini";
+const AZURE_OPENAI_API_VERSION = process.env.AZURE_OPENAI_API_VERSION || "2024-12-01-preview";
+
 const app = express();
 app.use(express.json());
+
+function isAzureOpenAIConfigured() {
+  return Boolean(AZURE_OPENAI_ENDPOINT && AZURE_OPENAI_API_KEY && AZURE_OPENAI_DEPLOYMENT);
+}
+
+async function callAzureOpenAIChatCompletion(messages, temperature = 0.2) {
+  if (!isAzureOpenAIConfigured()) {
+    throw new Error("Azure OpenAI no está configurado. Define AZURE_OPENAI_ENDPOINT, AZURE_OPENAI_API_KEY y AZURE_OPENAI_DEPLOYMENT");
+  }
+
+  const normalizedEndpoint = AZURE_OPENAI_ENDPOINT.replace(/\/$/, "");
+  const url = `${normalizedEndpoint}/openai/deployments/${AZURE_OPENAI_DEPLOYMENT}/chat/completions?api-version=${AZURE_OPENAI_API_VERSION}`;
+
+  const response = await fetch(url, {
+    method: "POST",
+    headers: {
+      "api-key": AZURE_OPENAI_API_KEY,
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({
+      messages,
+      temperature
+    })
+  });
+
+  const data = await response.json();
+
+  if (!response.ok) {
+    throw new Error(data?.error?.message || "Error con Azure OpenAI");
+  }
+
+  return data?.choices?.[0]?.message?.content?.trim() || "";
+}
 
 
 async function generateSQL(message, target, table) {
@@ -26,28 +64,9 @@ Pregunta:
 ${message}
 `;
 
-  const response = await fetch("https://api.openai.com/v1/chat/completions", {
-    method: "POST",
-    headers: {
-      "Authorization": `Bearer ${process.env.OPENAI_API_KEY}`,
-      "Content-Type": "application/json"
-    },
-    body: JSON.stringify({
-      model: "gpt-4o-mini",
-      messages: [
-        { role: "user", content: prompt }
-      ],
-      temperature: 0.2
-    })
-  });
-
-  const data = await response.json();
-
-  if (!response.ok) {
-    throw new Error(data?.error?.message || "Error con OpenAI");
-  }
-
-  return data.choices[0].message.content.trim();
+  return callAzureOpenAIChatCompletion([
+    { role: "user", content: prompt }
+  ], 0.2);
 }
 
 
@@ -69,21 +88,11 @@ Responde SOLO con "true" o "false". Nada más.
 Mensaje: "${message}"
 `;
 
-  const response = await fetch("https://api.openai.com/v1/chat/completions", {
-    method: "POST",
-    headers: {
-      "Authorization": `Bearer ${process.env.OPENAI_API_KEY}`,
-      "Content-Type": "application/json"
-    },
-    body: JSON.stringify({
-      model: "gpt-4o-mini",
-      messages: [{ role: "user", content: prompt }],
-      temperature: 0.1
-    })
-  });
+  const content = await callAzureOpenAIChatCompletion([
+    { role: "user", content: prompt }
+  ], 0.1);
 
-  const data = await response.json();
-  const result = data.choices[0].message.content.trim().toLowerCase();
+  const result = content.toLowerCase();
   return result === "true";
 }
 
