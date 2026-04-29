@@ -7,6 +7,7 @@ const AZURE_OPENAI_ENDPOINT = process.env.AZURE_OPENAI_ENDPOINT;
 const AZURE_OPENAI_API_KEY = process.env.AZURE_OPENAI_API_KEY;
 const AZURE_OPENAI_DEPLOYMENT = process.env.AZURE_OPENAI_DEPLOYMENT || "gpt-4.1-mini";
 const AZURE_OPENAI_API_VERSION = process.env.AZURE_OPENAI_API_VERSION || "2024-12-01-preview";
+const MCP_SQL_URL = process.env.MCP_SQL_URL || "http://mcp-sql:5000";
 
 const app = express();
 app.use(express.json());
@@ -165,7 +166,7 @@ app.post("/execute", async (req, res) => {
     const query = await generateSQL(message, target, table);
 
     // 🔹 4. Llamar al MCP SQL
-    const response = await fetch("http://mcp-sql:5000/query", {
+    const response = await fetch(`${MCP_SQL_URL}/query`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json"

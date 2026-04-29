@@ -4,12 +4,21 @@ import { useNavigate } from 'react-router-dom';
 import ChatHeader from '../components/ChatHeader';
 import MessageList from '../components/MessageList';
 import MessageInput from '../components/MessageInput';
+import { tokenRequest } from '../authConfig';
 
 // URL del backend (cambia según tu entorno)
 const BACKEND_URL = import.meta.env.VITE_BACKEND_URL || 'http://localhost:3000';
 
 const ChatInterface = () => {
-  const { instance, accounts } = useMsal();
+  const { instance, accounts, inProgress } = useMsal();
+
+  useEffect(() => {
+    if (inProgress === 'none' && (!accounts || accounts.length === 0)) {
+      navigate('/');
+    }
+  }, [accounts, inProgress, navigate]);
+
+  if (inProgress !== 'none') return null;
   const navigate = useNavigate();
   const [messages, setMessages] = useState([
     {
@@ -31,10 +40,10 @@ const ChatInterface = () => {
   // Obtener el token para las peticiones
   const getToken = async () => {
     if (!accounts || accounts.length === 0) return null;
-    
+
     try {
       const response = await instance.acquireTokenSilent({
-        scopes: ['User.Read', 'openid', 'profile'],
+        ...tokenRequest,
         account: accounts[0]
       });
       return response.accessToken;
@@ -42,7 +51,8 @@ const ChatInterface = () => {
       console.error('Error obteniendo token:', error);
       // Si falla silencioso, intentamos con popup
       const response = await instance.acquireTokenPopup({
-        scopes: ['User.Read', 'openid', 'profile']
+        ...tokenRequest,
+        account: accounts[0]
       });
       return response.accessToken;
     }
@@ -65,7 +75,7 @@ const ChatInterface = () => {
     try {
       // Obtener token de autenticación
       const token = await getToken();
-      
+
       if (!token) {
         throw new Error('No se pudo obtener token de autenticación');
       }
@@ -89,30 +99,30 @@ const ChatInterface = () => {
       }
 
       const data = await response.json();
-      
+
       // Construir mensaje del asistente
       let assistantContent = '';
       let chartData = null;
-      
+
       if (data.type === 'success') {
         // Formatear los datos para mostrarlos bonito
         if (data.data && Array.isArray(data.data) && data.data.length > 0) {
           assistantContent = `📊 **Resultado de la consulta:**\n\n`;
           assistantContent += `Se encontraron ${data.data.length} registros.\n\n`;
-          
+
           // Mostrar primeros 5 resultados como tabla
           const headers = Object.keys(data.data[0]);
           assistantContent += `| ${headers.join(' | ')} |\n`;
           assistantContent += `|${headers.map(() => '---').join('|')}|\n`;
-          
+
           data.data.slice(0, 5).forEach(row => {
             assistantContent += `| ${headers.map(h => String(row[h] || '-').slice(0, 30)).join(' | ')} |\n`;
           });
-          
+
           if (data.data.length > 5) {
             assistantContent += `\n*... y ${data.data.length - 5} registros más.*\n`;
           }
-          
+
           // Si el usuario pidió gráfica o hay sugerencia
           if (data.wantsChart || data.chartSuggestion?.possible) {
             chartData = {
@@ -133,7 +143,7 @@ const ChatInterface = () => {
       } else {
         assistantContent = `❌ **Error:** ${data.message || 'No se pudo procesar la consulta'}`;
       }
-      
+
       const assistantMessage = {
         id: Date.now() + 1,
         role: 'assistant',
@@ -144,9 +154,9 @@ const ChatInterface = () => {
           duration_ms: Date.now() - userMessage.id
         }
       };
-      
+
       setMessages(prev => [...prev, assistantMessage]);
-      
+
     } catch (error) {
       console.error('Error en el chat:', error);
       setMessages(prev => [...prev, {
@@ -170,7 +180,7 @@ const ChatInterface = () => {
 
   return (
     <div className="app-container">
-      <ChatHeader 
+      <ChatHeader
         userName={userName}
         userEmail={userEmail}
         onLogout={() => {

@@ -3,26 +3,28 @@ import ReactDOM from 'react-dom/client';
 import { PublicClientApplication } from '@azure/msal-browser';
 import { MsalProvider } from '@azure/msal-react';
 import App from './App';
+import { msalConfig } from './authConfig';
 import './index.css';
-
-// Configuración de Entra ID
-const msalConfig = {
-  auth: {
-    clientId: import.meta.env.VITE_ENTRA_CLIENT_ID,  // Lo pones en .env
-    authority: `https://login.microsoftonline.com/${import.meta.env.VITE_ENTRA_TENANT_ID}`,
-    redirectUri: window.location.origin,
-  },
-  cache: {
-    cacheLocation: 'localStorage',
-  },
-};
 
 const msalInstance = new PublicClientApplication(msalConfig);
 
-ReactDOM.createRoot(document.getElementById('root')).render(
-  <React.StrictMode>
-    <MsalProvider instance={msalInstance}>
-      <App />
-    </MsalProvider>
-  </React.StrictMode>
-);
+async function bootstrap() {
+  await msalInstance.initialize();
+  await msalInstance.handleRedirectPromise();
+
+  const accounts = msalInstance.getAllAccounts();
+  if (!msalInstance.getActiveAccount() && accounts.length > 0) {
+    msalInstance.setActiveAccount(accounts[0]);
+  }
+
+  ReactDOM.createRoot(document.getElementById('root')).render(
+    <React.StrictMode>
+      <MsalProvider instance={msalInstance}>
+        <App />
+      </MsalProvider>
+    </React.StrictMode>
+  );
+}
+
+bootstrap();
+

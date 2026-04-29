@@ -1,6 +1,10 @@
 import express from "express";
 import sql from "mssql";
 
+import dotenv from "dotenv";
+dotenv.config();
+
+
 const app = express();
 app.use(express.json());
 
@@ -8,26 +12,23 @@ app.use(express.json());
 // CONFIGURACIÓN DE CONEXIONES
 // ============================================
 // Mapa de conexiones permitidas (solo estas pueden usarse)
+// En la sección de configuración de conexiones
 const connectionConfigs = {
   "sql-01": {
-    server: process.env.SQL_SERVER_01 || "servidor1.database.windows.net",
-    database: process.env.SQL_DATABASE_01 || "ventas",
-    user: process.env.SQL_USER_01,
-    password: process.env.SQL_PASSWORD_01,
+    server: process.env.SQL_SERVER_01 || "localhost",
+    database: process.env.SQL_DATABASE_01 || "prueba_mcp",
+    // Si no hay credenciales, usa Windows Authentication
+    ...(process.env.SQL_USER_01 && process.env.SQL_PASSWORD_01 ? {
+      user: process.env.SQL_USER_01,
+      password: process.env.SQL_PASSWORD_01
+    } : {
+      options: {
+        trustedConnection: true  // ← Windows Authentication
+      }
+    }),
     options: {
-      encrypt: true,
-      trustServerCertificate: false,
-      enableArithAbort: true
-    }
-  },
-  "sql-02": {
-    server: process.env.SQL_SERVER_02 || "servidor2.database.windows.net",
-    database: process.env.SQL_DATABASE_02 || "crm",
-    user: process.env.SQL_USER_02,
-    password: process.env.SQL_PASSWORD_02,
-    options: {
-      encrypt: true,
-      trustServerCertificate: false,
+      encrypt: false,  // ← LOCAL: false, AZURE: true
+      trustServerCertificate: true,  // ← LOCAL: true
       enableArithAbort: true
     }
   }

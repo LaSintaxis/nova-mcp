@@ -1,32 +1,75 @@
 import { useMsal } from '@azure/msal-react';
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { employeeLoginRequest } from '../authConfig';
 import '../styles/Login.css';
 
 const Login = () => {
   const { instance } = useMsal();
   const navigate = useNavigate();
   const [isLoading, setIsLoading] = useState(false);
+  const [activeTab, setActiveTab] = useState('employees');
+  const [clientUser, setClientUser] = useState('');
+  const [clientPassword, setClientPassword] = useState('');
+  const [clientLoading, setClientLoading] = useState(false);
 
+  // ============================================
+  // EMPLEADO: SSO con Microsoft Entra ID
+  // ============================================
   const handleMicrosoftLogin = async () => {
     setIsLoading(true);
     
     try {
-      // Login con Microsoft Entra ID
-      const loginResponse = await instance.loginPopup({
-        scopes: ['User.Read', 'openid', 'profile']
+      const loginResponse = await instance.loginPopup(employeeLoginRequest);
+      console.log('Empleado autenticado:', loginResponse.account);
+      navigate('/chat');
+    } catch (error) {
+      console.error('Error en SSO:', error);
+      setIsLoading(false);
+      alert('Error al iniciar sesión con Microsoft: ' + (error.errorMessage || error.message));
+    }
+  };
+
+  // ============================================
+  // CLIENTE: Usuario/contraseña de dominio
+  // ============================================
+  const handleClientLogin = async (event) => {
+    event.preventDefault();
+    
+    if (!clientUser.trim() || !clientPassword.trim()) {
+      alert('Por favor ingrese usuario y contraseña');
+      return;
+    }
+    
+    setClientLoading(true);
+    
+    try {
+      // Llamar al backend para autenticar al cliente
+      const response = await fetch('http://localhost:3000/auth/client', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          username: clientUser,
+          password: clientPassword
+        })
       });
       
-      // Si llegamos aquí, el login fue exitoso
-      console.log('Usuario autenticado:', loginResponse.account);
+      const data = await response.json();
+      
+      if (!response.ok) {
+        throw new Error(data.message || 'Error de autenticación');
+      }
+      
+      // Guardar token de cliente
+      localStorage.setItem('client_token', data.token);
+      localStorage.setItem('user_type', 'client');
+      
       navigate('/chat');
       
     } catch (error) {
-      console.error('Error en login:', error);
-      setIsLoading(false);
-      
-      // Mostrar error al usuario
-      alert('Error al iniciar sesión: ' + (error.errorMessage || error.message));
+      console.error('Error en login de cliente:', error);
+      alert('Error al iniciar sesión: ' + error.message);
+      setClientLoading(false);
     }
   };
 
@@ -47,23 +90,79 @@ const Login = () => {
           <br />
 
           <div className="login-body">
+            {/* Pestañas: Cliente / Empleado */}
+            <div className="login-tabs" role="tablist" aria-label="Tipo de acceso">
+              <button
+                type="button"
+                className={`login-tab ${activeTab === 'clients' ? 'active' : ''}`}
+                role="tab"
+                aria-selected={activeTab === 'clients'}
+                onClick={() => setActiveTab('clients')}
+              >
+                Cliente
+              </button>
+              <button
+                type="button"
+                className={`login-tab ${activeTab === 'employees' ? 'active' : ''}`}
+                role="tab"
+                aria-selected={activeTab === 'employees'}
+                onClick={() => setActiveTab('employees')}
+              >
+                Empleado
+              </button>
+            </div>
+
             <p className="login-description">
-              Acceda con su cuenta corporativa de Microsoft para comenzar
+              {activeTab === 'employees'
+                ? 'Acceda con su cuenta corporativa de Microsoft para comenzar'
+                : 'Ingrese sus credenciales de dominio para continuar'}
             </p>
 
-            <button 
-              className="microsoft-login-button"
-              onClick={handleMicrosoftLogin}
-              disabled={isLoading}
-            >
-              <svg width="18" height="18" viewBox="0 0 18 18" fill="none" xmlns="http://www.w3.org/2000/svg">
-                <rect x="1" y="1" width="7" height="7" fill="currentColor"/>
-                <rect x="10" y="1" width="7" height="7" fill="currentColor"/>
-                <rect x="1" y="10" width="7" height="7" fill="currentColor"/>
-                <rect x="10" y="10" width="7" height="7" fill="currentColor"/>
-              </svg>
-              {isLoading ? 'Conectando...' : 'Iniciar sesión con Microsoft'}
-            </button>
+            {/* EMPLEADO: SSO Microsoft */}
+            {activeTab === 'employees' && (
+              <button
+                className="microsoft-login-button"
+                onClick={handleMicrosoftLogin}
+                disabled={isLoading}
+              >
+                <svg width="18" height="18" viewBox="0 0 18 18" fill="none" xmlns="http://www.w3.org/2000/svg">
+                  <rect x="1" y="1" width="7" height="7" fill="currentColor"/>
+                  <rect x="10" y="1" width="7" height="7" fill="currentColor"/>
+                  <rect x="1" y="10" width="7" height="7" fill="currentColor"/>
+                  <rect x="10" y="10" width="7" height="7" fill="currentColor"/>
+                </svg>
+                {isLoading ? 'Conectando...' : 'Iniciar sesión con Microsoft'}
+              </button>
+            )}
+
+            {/* CLIENTE: Usuario/contraseña */}
+            {activeTab === 'clients' && (
+              <form className="client-login" onSubmit={handleClientLogin}>
+                <input
+                  type="text"
+                  className="client-input"
+                  placeholder="Usuario de dominio (ej: empresa\\usuario)"
+                  value={clientUser}
+                  onChange={(event) => setClientUser(event.target.value)}
+                  disabled={clientLoading}
+                />
+                <input
+                  type="password"
+                  className="client-input"
+                  placeholder="Contraseña"
+                  value={clientPassword}
+                  onChange={(event) => setClientPassword(event.target.value)}
+                  disabled={clientLoading}
+                />
+                <button 
+                  className="microsoft-login-button" 
+                  type="submit"
+                  disabled={clientLoading}
+                >
+                  {clientLoading ? 'Validando...' : 'Iniciar sesión'}
+                </button>
+              </form>
+            )}
 
             <div className="login-security-info">
               <svg width="16" height="16" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
@@ -80,27 +179,27 @@ const Login = () => {
         </div>
 
         <div className="login-features">
-          <h2>Lorem</h2>
+          <h2>Asistente IA</h2>
           <div className="features-list">
             <div className="feature-item">
               <div className="feature-icon">📊</div>
               <div>
-                <h3>Lorem Ipsum</h3>
-                <p>Lorem ipsum dolor sit amet, consectetur adipiscing elit.</p>
+                <h3>Consultas SQL</h3>
+                <p>Accede a tus bases de datos en lenguaje natural</p>
               </div>
             </div>
             <div className="feature-item">
               <div className="feature-icon">🖥️</div>
               <div>
-                <h3>Lorem Ipsum</h3>
-                <p>Lorem ipsum dolor sit amet, consectetur adipiscing elit.</p>
+                <h3>Gestión de VMs</h3>
+                <p>Controla tus máquinas virtuales</p>
               </div>
             </div>
             <div className="feature-item">
               <div className="feature-icon">📈</div>
               <div>
-                <h3>Lorem Ipsum</h3>
-                <p>Lorem ipsum dolor sit amet, consectetur adipiscing elit.</p>
+                <h3>Reportes SSRS</h3>
+                <p>Consulta tus reportes empresariales</p>
               </div>
             </div>
           </div>

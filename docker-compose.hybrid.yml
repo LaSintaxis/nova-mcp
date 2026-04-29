@@ -1,0 +1,6 @@
+services:
+  gateway:
+    environment:
+      MCP_SQL_URL: http://host.docker.internal:5000
+    extra_hosts:
+      - "host.docker.internal:host-gateway"

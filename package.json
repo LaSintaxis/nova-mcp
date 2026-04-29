@@ -1,4 +1,13 @@
 {
+  "name": "mcp-novasoft",
+  "private": true,
+  "scripts": {
+    "docker:up": "docker compose up -d --build",
+    "docker:down": "docker compose down",
+    "docker:up:hybrid": "docker compose -f docker-compose.yml -f docker-compose.hybrid.yml up -d --build backend context-resolver gateway",
+    "docker:down:hybrid": "docker compose -f docker-compose.yml -f docker-compose.hybrid.yml down",
+    "mcp-sql:local": "npm --prefix mcp-sql run dev"
+  },
   "dependencies": {
     "react-router-dom": "^7.14.1"
   }
