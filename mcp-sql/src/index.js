@@ -1,41 +1,62 @@
 import express from "express";
 import sql from "mssql";
-
 import dotenv from "dotenv";
 dotenv.config();
-
 
 const app = express();
 app.use(express.json());
 
 // ============================================
-// CONFIGURACIÓN DE CONEXIONES
+// CONFIGURACIÓN ESCALABLE
 // ============================================
-// Mapa de conexiones permitidas (solo estas pueden usarse)
-// En la sección de configuración de conexiones
-const connectionConfigs = {
-  "sql-01": {
-    server: process.env.SQL_SERVER_01 || "localhost",
-    database: process.env.SQL_DATABASE_01 || "prueba_mcp",
-    // Si no hay credenciales, usa Windows Authentication
-    ...(process.env.SQL_USER_01 && process.env.SQL_PASSWORD_01 ? {
-      user: process.env.SQL_USER_01,
-      password: process.env.SQL_PASSWORD_01
-    } : {
+// Soporta múltiples servidores vía variables de entorno
+// Ejemplo: SQL_SERVER_01 = ip o nombre del servidor
+// Ejemplo: SQL_SERVER_02 = otra ip
+
+const connectionConfigs = {};
+
+// Leer todas las variables SQL_SERVER_XX
+Object.keys(process.env).forEach(key => {
+  const match = key.match(/^SQL_SERVER_(.+)$/);
+  if (match) {
+    const serverKey = match[1].toLowerCase();
+    const serverAddress = process.env[key];
+    const databaseName = process.env[`SQL_DATABASE_${match[1]}`] || "master";
+    
+    connectionConfigs[`sql-${serverKey}`] = {
+      server: serverAddress,
+      database: databaseName,
       options: {
-        trustedConnection: true  // ← Windows Authentication
+        trustedConnection: true,
+        trustServerCertificate: true,
+        encrypt: false,
+        enableArithAbort: true
       }
-    }),
+    };
+    
+    console.log(`✅ Configurado servidor: sql-${serverKey} -> ${serverAddress}`);
+  }
+});
+
+// Si no hay configuraciones, usar valor por defecto (desarrollo local)
+if (Object.keys(connectionConfigs).length === 0) {
+  console.log("⚠️ No se encontraron variables SQL_SERVER_XX, usando configuración por defecto");
+  connectionConfigs["sql-01"] = {
+    server: "E-23YP6S2",
+    database: "master",
     options: {
-      encrypt: false,  // ← LOCAL: false, AZURE: true
-      trustServerCertificate: true,  // ← LOCAL: true
+      trustedConnection: true,
+      trustServerCertificate: true,
+      encrypt: false,
       enableArithAbort: true
     }
-  }
-};
+  };
+}
+
+console.log("=================================");
 
 // ============================================
-// VALIDACIÓN DE QUERIES (SEGURIDAD)
+// VALIDACIÓN DE QUERIES
 // ============================================
 function isQuerySafe(query) {
   const dangerousKeywords = [
@@ -51,127 +72,111 @@ function isQuerySafe(query) {
     }
   }
   
-  // Solo permitir SELECT
-  if (!upperQuery.trim().startsWith("SELECT")) {
-    return false;
-  }
-  
-  return true;
+  return upperQuery.trim().startsWith("SELECT");
 }
 
 // ============================================
-// ENDPOINT PRINCIPAL
+// ENDPOINTS
 // ============================================
 app.get("/health", (_req, res) => {
-  res.status(200).json({
-    ok: true,
-    service: "mcp-sql"
-  });
+  res.status(200).json({ ok: true, service: "mcp-sql" });
 });
 
-app.post("/query", async (req, res) => {
-  const { query, connection } = req.body;
-
-  if (!query || typeof query !== "string") {
-    return res.status(400).json({
-      success: false,
-      message: "El campo 'query' es obligatorio"
-    });
-  }
-
-  // ============================================
-  // 1. VALIDAR SEGURIDAD
-  // ============================================
-  if (!isQuerySafe(query)) {
-    console.warn(`Query bloqueada por razones de seguridad: ${query}`);
-    return res.status(403).json({
-      success: false,
-      message: "La consulta contiene operaciones no permitidas. Solo SELECT está autorizado."
-    });
-  }
-
-  // ============================================
-  // 2. OBTENER CONFIGURACIÓN DE CONEXIÓN
-  // ============================================
-  let config;
+// Listar todas las bases de datos del servidor
+app.post("/databases", async (req, res) => {
+  const { connection } = req.body;
   
+  let serverKey = "sql-01";
   if (connection?.server && connectionConfigs[connection.server]) {
-    config = connectionConfigs[connection.server];
-  } else if (connection?.server) {
-    // Si el servidor no está en la lista blanca, rechazar
-    return res.status(403).json({
-      success: false,
-      message: `Servidor '${connection.server}' no está autorizado`
-    });
-  } else {
-    // Usar el primer servidor por defecto
-    const defaultServer = Object.keys(connectionConfigs)[0];
-    config = connectionConfigs[defaultServer];
+    serverKey = connection.server;
   }
+  
+  const config = {
+    ...connectionConfigs[serverKey],
+    database: "master"
+  };
 
-  if (!config) {
-    return res.status(500).json({
-      success: false,
-      message: "No hay configuración de conexión disponible"
-    });
-  }
-
-  console.log("Ejecutando query:", query);
-  console.log("En servidor:", config.server, "base de datos:", config.database);
+  console.log(`📡 Conectando a ${config.server} para listar bases de datos`);
 
   try {
-    // ============================================
-    // 3. CONECTAR Y EJECUTAR
-    // ============================================
+    const pool = await sql.connect(config);
+    const result = await pool.request().query(`
+      SELECT name FROM sys.databases 
+      WHERE state_desc = 'ONLINE'
+      AND name NOT IN ('master', 'tempdb', 'model', 'msdb')
+      ORDER BY name
+    `);
+    await pool.close();
+
+    res.json({
+      success: true,
+      databases: result.recordset.map(db => db.name),
+      count: result.recordset.length
+    });
+  } catch (error) {
+    console.error("Error:", error);
+    res.status(500).json({
+      success: false,
+      message: "Error listando bases de datos",
+      sqlError: error.message
+    });
+  }
+});
+
+// Ejecutar query en una base de datos específica
+app.post("/query-with-db", async (req, res) => {
+  const { query, database, connection } = req.body;
+
+  if (!query || typeof query !== "string") {
+    return res.status(400).json({ success: false, message: "Query requerida" });
+  }
+
+  if (!database) {
+    return res.status(400).json({ success: false, message: "Database requerida" });
+  }
+
+  if (!isQuerySafe(query)) {
+    return res.status(403).json({ success: false, message: "Solo SELECT está permitido" });
+  }
+
+  let serverKey = "sql-01";
+  if (connection?.server && connectionConfigs[connection.server]) {
+    serverKey = connection.server;
+  }
+
+  const config = {
+    ...connectionConfigs[serverKey],
+    database: database
+  };
+
+  console.log(`📡 Conectando a ${config.server}/${database}`);
+  console.log(`📝 Query: ${query.substring(0, 100)}...`);
+
+  try {
     const pool = await sql.connect(config);
     const result = await pool.request().query(query);
     await pool.close();
 
-    // ============================================
-    // 4. FORMATEAR RESPUESTA PARA GRÁFICAS
-    // ============================================
-    // Detectar si los datos pueden representarse como gráfica
     const columns = result.recordset[0] ? Object.keys(result.recordset[0]) : [];
     
-    // Si hay al menos una columna numérica y una categórica, sugerir gráfica
-    const hasNumericColumn = columns.some(col => 
-      typeof result.recordset[0]?.[col] === 'number'
-    );
-    const hasStringColumn = columns.some(col => 
-      typeof result.recordset[0]?.[col] === 'string'
-    );
-
-    const chartSuggestion = (hasNumericColumn && hasStringColumn) ? {
-      possible: true,
-      xAxis: columns.find(col => typeof result.recordset[0]?.[col] === 'string'),
-      yAxis: columns.find(col => typeof result.recordset[0]?.[col] === 'number'),
-      type: "bar" // o "line" dependiendo de los datos
-    } : null;
-
     res.json({
       success: true,
-      connection: {
-        server: config.server,
-        database: config.database
-      },
-      query: query,
+      database: database,
       data: result.recordset,
       rowCount: result.recordset.length,
-      columns: columns,
-      chartSuggestion: chartSuggestion
+      columns: columns
     });
-
   } catch (error) {
-    console.error("Error ejecutando query:", error);
+    console.error("Error:", error);
     res.status(500).json({
       success: false,
-      message: "Error ejecutando la consulta en la base de datos",
+      message: "Error ejecutando consulta",
       sqlError: error.message
     });
   }
 });
 
 app.listen(5000, () => {
-  console.log("MCP SQL corriendo en puerto 5000");
-  console.log("✅ Conectado a SQL Server real");
+  console.log("🚀 MCP SQL corriendo en puerto 5000");
+  console.log(`📊 Servidores configurados: ${Object.keys(connectionConfigs).join(", ")}`);
 });
