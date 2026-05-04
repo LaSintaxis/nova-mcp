@@ -1,24 +1,25 @@
 import { useState, useRef, useEffect } from 'react';
-import { useMsal } from '@azure/msal-react';
+// COMENTADO: import { useMsal } from '@azure/msal-react';
 import { useNavigate } from 'react-router-dom';
 import ChatHeader from '../components/ChatHeader';
 import MessageList from '../components/MessageList';
 import MessageInput from '../components/MessageInput';
-import { tokenRequest } from '../authConfig';
+// COMENTADO: import { tokenRequest } from '../authConfig';
 
 // URL del backend (cambia según tu entorno)
 const BACKEND_URL = import.meta.env.VITE_BACKEND_URL || 'http://localhost:3000';
 
 const ChatInterface = () => {
-  const { instance, accounts, inProgress } = useMsal();
+  // COMENTADO: const { instance, accounts, inProgress } = useMsal();
 
-  useEffect(() => {
-    if (inProgress === 'none' && (!accounts || accounts.length === 0)) {
-      navigate('/');
-    }
-  }, [accounts, inProgress, navigate]);
+  // COMENTADO: useEffect(() => {
+  // COMENTADO:   if (inProgress === 'none' && (!accounts || accounts.length === 0)) {
+  // COMENTADO:     navigate('/');
+  // COMENTADO:   }
+  // COMENTADO: }, [accounts, inProgress, navigate]);
 
-  if (inProgress !== 'none') return null;
+  // COMENTADO: if (inProgress !== 'none') return null;
+  
   const navigate = useNavigate();
   const [messages, setMessages] = useState([
     {
@@ -30,33 +31,33 @@ const ChatInterface = () => {
   const [isLoading, setIsLoading] = useState(false);
   const [inputValue, setInputValue] = useState('');
 
-  // Verificar si el usuario está autenticado
-  useEffect(() => {
-    if (!accounts || accounts.length === 0) {
-      navigate('/');
-    }
-  }, [accounts, navigate]);
+  // COMENTADO: // Verificar si el usuario está autenticado
+  // COMENTADO: useEffect(() => {
+  // COMENTADO:   if (!accounts || accounts.length === 0) {
+  // COMENTADO:     navigate('/');
+  // COMENTADO:   }
+  // COMENTADO: }, [accounts, navigate]);
 
-  // Obtener el token para las peticiones
-  const getToken = async () => {
-    if (!accounts || accounts.length === 0) return null;
-
-    try {
-      const response = await instance.acquireTokenSilent({
-        ...tokenRequest,
-        account: accounts[0]
-      });
-      return response.accessToken;
-    } catch (error) {
-      console.error('Error obteniendo token:', error);
-      // Si falla silencioso, intentamos con popup
-      const response = await instance.acquireTokenPopup({
-        ...tokenRequest,
-        account: accounts[0]
-      });
-      return response.accessToken;
-    }
-  };
+  // COMENTADO: // Obtener el token para las peticiones
+  // COMENTADO: const getToken = async () => {
+  // COMENTADO:   if (!accounts || accounts.length === 0) return null;
+  // COMENTADO: 
+  // COMENTADO:   try {
+  // COMENTADO:     const response = await instance.acquireTokenSilent({
+  // COMENTADO:       ...tokenRequest,
+  // COMENTADO:       account: accounts[0]
+  // COMENTADO:     });
+  // COMENTADO:     return response.accessToken;
+  // COMENTADO:   } catch (error) {
+  // COMENTADO:     console.error('Error obteniendo token:', error);
+  // COMENTADO:     // Si falla silencioso, intentamos con popup
+  // COMENTADO:     const response = await instance.acquireTokenPopup({
+  // COMENTADO:       ...tokenRequest,
+  // COMENTADO:       account: accounts[0]
+  // COMENTADO:     });
+  // COMENTADO:     return response.accessToken;
+  // COMENTADO:   }
+  // COMENTADO: };
 
   const handleSend = async () => {
     if (!inputValue.trim() || isLoading) return;
@@ -73,19 +74,19 @@ const ChatInterface = () => {
     setIsLoading(true);
 
     try {
-      // Obtener token de autenticación
-      const token = await getToken();
-
-      if (!token) {
-        throw new Error('No se pudo obtener token de autenticación');
-      }
+      // COMENTADO: // Obtener token de autenticación
+      // COMENTADO: const token = await getToken();
+      // COMENTADO: 
+      // COMENTADO: if (!token) {
+      // COMENTADO:   throw new Error('No se pudo obtener token de autenticación');
+      // COMENTADO: }
 
       // Llamar al backend real
       const response = await fetch(`${BACKEND_URL}/chat`, {
         method: 'POST',
         headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`
+          'Content-Type': 'application/json'
+          // COMENTADO: 'Authorization': `Bearer ${token}`
         },
         body: JSON.stringify({
           message: userQuestion,
@@ -169,14 +170,18 @@ const ChatInterface = () => {
     }
   };
 
-  // Si no hay sesión, no mostrar nada (redirige el useEffect)
-  if (!accounts || accounts.length === 0) {
-    return null;
-  }
+  // COMENTADO: // Si no hay sesión, no mostrar nada (redirige el useEffect)
+  // COMENTADO: if (!accounts || accounts.length === 0) {
+  // COMENTADO:   return null;
+  // COMENTADO: }
 
-  // Obtener nombre del usuario autenticado
-  const userName = accounts[0]?.name || 'Usuario';
-  const userEmail = accounts[0]?.username || '';
+  // COMENTADO: // Obtener nombre del usuario autenticado
+  // COMENTADO: const userName = accounts[0]?.name || 'Usuario';
+  // COMENTADO: const userEmail = accounts[0]?.username || '';
+
+  // Usuario mock para pruebas sin autenticación
+  const userName = 'Usuario Prueba';
+  const userEmail = 'prueba@novasoft.com';
 
   return (
     <div className="app-container">
@@ -184,7 +189,9 @@ const ChatInterface = () => {
         userName={userName}
         userEmail={userEmail}
         onLogout={() => {
-          instance.logoutPopup().catch(console.error);
+          // COMENTADO: instance.logoutPopup().catch(console.error);
+          console.log('Logout - Modo prueba sin autenticación');
+          navigate('/');
         }}
       />
       <MessageList
