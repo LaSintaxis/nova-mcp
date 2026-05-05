@@ -2,11 +2,24 @@ import express from "express";
 import fetch from "node-fetch";
 import jwt from "jsonwebtoken";
 import jwksClient from "jwks-rsa";
+import cors from "cors";
 import dotenv from "dotenv";
 dotenv.config();
 
 const app = express();
+
+app.use(cors({
+  origin: "*",
+  methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+  allowedHeaders: ["Content-Type", "Authorization"],
+  credentials: true
+}));
+ 
+// Responder preflight OPTIONS explícitamente
+app.options("*", cors());
+ 
 app.use(express.json());
+
 
 // ============================================
 // CONFIGURACIÓN ENTRADA ID - UNA SOLA APP
@@ -44,54 +57,64 @@ function getKey(header, callback) {
 // MIDDLEWARE DE AUTENTICACIÓN
 // ============================================
 async function authenticateToken(req, res, next) {
-  const authHeader = req.headers.authorization;
-  const token = authHeader && authHeader.split(' ')[1];
+  // COMENTADO: const authHeader = req.headers.authorization;
+  // COMENTADO: const token = authHeader && authHeader.split(' ')[1];
 
-  if (!token) {
-    return res.status(401).json({ 
-      type: "error", 
-      message: "Token no proporcionado" 
-    });
-  }
+  // COMENTADO: if (!token) {
+  // COMENTADO:   return res.status(401).json({ 
+  // COMENTADO:     type: "error", 
+  // COMENTADO:     message: "Token no proporcionado" 
+  // COMENTADO:   });
+  // COMENTADO: }
 
-  const validationOptions = {
-    audience: allowedAudiences,
-    issuer: `${AUTHORITY}`,
-    algorithms: ["RS256"]
+  // COMENTADO: const validationOptions = {
+  // COMENTADO:   audience: allowedAudiences,
+  // COMENTADO:   issuer: `${AUTHORITY}`,
+  // COMENTADO:   algorithms: ["RS256"]
+  // COMENTADO: };
+
+  // COMENTADO: jwt.verify(token, getKey, validationOptions, (err, decoded) => {
+  // COMENTADO:   if (err) {
+  // COMENTADO:     console.error("Error validando token:", err);
+  // COMENTADO:     return res.status(403).json({ 
+  // COMENTADO:       type: "error", 
+  // COMENTADO:       message: "Token inválido o expirado",
+  // COMENTADO:       details: err.message
+  // COMENTADO:     });
+  // COMENTADO:   }
+
+  // COMENTADO:   // Verificar tenant
+  // COMENTADO:   const allowedTenants = process.env.ALLOWED_TENANTS
+  // COMENTADO:     ? process.env.ALLOWED_TENANTS.split(',').map(t => t.trim()).filter(Boolean)
+  // COMENTADO:     : [TENANT_ID];
+
+  // COMENTADO:   if (!allowedTenants.includes(decoded.tid)) {
+  // COMENTADO:     return res.status(403).json({
+  // COMENTADO:       type: "error",
+  // COMENTADO:       message: "Acceso denegado. Solo usuarios de la empresa autorizada."
+  // COMENTADO:     });
+  // COMENTADO:   }
+
+  // COMENTADO:   // Guardar información del usuario
+  // COMENTADO:   req.user = {
+  // COMENTADO:     email: decoded.email || decoded.upn || decoded.unique_name,
+  // COMENTADO:     name: decoded.name,
+  // COMENTADO:     tenantId: decoded.tid,
+  // COMENTADO:     userId: decoded.oid
+  // COMENTADO:   };
+
+  // COMENTADO:   next();
+  // COMENTADO: });
+
+  // Usuario mock para pruebas sin autenticación
+  req.user = {
+    email: "prueba@novasoft.com",
+    name: "Usuario Prueba",
+    tenantId: TENANT_ID,
+    userId: "mock-user-id"
   };
 
-  jwt.verify(token, getKey, validationOptions, (err, decoded) => {
-    if (err) {
-      console.error("Error validando token:", err);
-      return res.status(403).json({ 
-        type: "error", 
-        message: "Token inválido o expirado",
-        details: err.message
-      });
-    }
-
-    // Verificar tenant
-    const allowedTenants = process.env.ALLOWED_TENANTS
-      ? process.env.ALLOWED_TENANTS.split(',').map(t => t.trim()).filter(Boolean)
-      : [TENANT_ID];
-      
-    if (!allowedTenants.includes(decoded.tid)) {
-      return res.status(403).json({
-        type: "error",
-        message: "Acceso denegado. Solo usuarios de la empresa autorizada."
-      });
-    }
-
-    // Guardar información del usuario
-    req.user = {
-      email: decoded.email || decoded.upn || decoded.unique_name,
-      name: decoded.name,
-      tenantId: decoded.tid,
-      userId: decoded.oid
-    };
-    
-    next();
-  });
+  next();
 }
 
 // ============================================
@@ -101,12 +124,15 @@ app.get("/health", (_req, res) => {
   res.status(200).json({ ok: true, service: "backend" });
 });
 
-app.post("/chat", authenticateToken, async (req, res) => {
+// COMENTADO: app.post("/chat", authenticateToken, async (req, res) => {
+// Versión sin autenticación
+app.post("/chat", async (req, res) => {
   const { message, context = {} } = req.body;
 
   const enrichedContext = {
     ...context,
-    user: req.user
+    // COMENTADO: user: req.user
+    user: { email: "prueba@novasoft.com", name: "Usuario Prueba" }
   };
 
   if (!message || typeof message !== "string") {
@@ -117,7 +143,9 @@ app.post("/chat", authenticateToken, async (req, res) => {
   }
 
   try {
-    const response = await fetch("http://gateway:4000/execute", {
+    // Por ahora usar /chat-direct (IA sin SQL)
+    // Luego cambiar a /execute cuando integres mcp-sql
+    const response = await fetch("http://localhost:4000/execute", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ message, context: enrichedContext })
@@ -128,13 +156,14 @@ app.post("/chat", authenticateToken, async (req, res) => {
     if (!response.ok) {
       return res.status(response.status).json({
         type: "error",
-        message: data?.message || "Error al ejecutar consulta en gateway",
+        message: data?.message || "Error al comunicarse con el gateway",
         details: data
       });
     }
 
     return res.json({
-      message: data?.type === "success" ? "Resultado de la consulta" : "Se requiere aclaración",
+      type: "success",
+      message: data.response || data.message || "Respuesta procesada",
       ...data
     });
   } catch (error) {
@@ -145,8 +174,6 @@ app.post("/chat", authenticateToken, async (req, res) => {
     });
   }
 });
-
-
 
 // ============================================
 // AUTENTICACIÓN PARA CLIENTES (usuario/contraseña)
@@ -159,15 +186,12 @@ app.post("/auth/client", async (req, res) => {
   }
 
   try {
-    // Aquí validas contra tu sistema de usuarios (SQL Server, AD, etc.)
-    // Por ahora es una validación de ejemplo
     const isValid = await validateClientCredentials(username, password);
-    
+
     if (!isValid) {
       return res.status(401).json({ message: "Credenciales inválidas" });
     }
 
-    // Generar token JWT para el cliente (puedes usar la misma lógica de Entra ID)
     const token = jwt.sign(
       {
         sub: username,
@@ -185,20 +209,12 @@ app.post("/auth/client", async (req, res) => {
   }
 });
 
-// Función de ejemplo para validar cliente (debes implementar según tu sistema)
 async function validateClientCredentials(username, password) {
-  // Opción 1: Validar contra SQL Server
-  // Opción 2: Validar contra Active Directory
-  // Por ahora, ejemplo simple:
-  // return username === 'empresa\\cliente' && password === 'password123';
-  
-  // TODO: Implementar validación real contra tu sistema
   console.log(`Validando cliente: ${username}`);
-  return true; // Temporal - CAMBIAR EN PRODUCCIÓN
+  return true;
 }
-
 
 app.listen(3000, () => {
   console.log("Backend corriendo en puerto 3000");
-  console.log(`🔐 Autenticación Entra ID activada (Client ID: ${CLIENT_ID})`);
+  console.log(`🔓 MODO PRUEBA - Autenticación desactivada`);
 });

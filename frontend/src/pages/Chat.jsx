@@ -10,17 +10,6 @@ import MessageInput from '../components/MessageInput';
 const BACKEND_URL = import.meta.env.VITE_BACKEND_URL || 'http://localhost:3000';
 
 const ChatInterface = () => {
-  // COMENTADO: const { instance, accounts, inProgress } = useMsal();
-
-  // COMENTADO: useEffect(() => {
-  // COMENTADO:   if (inProgress === 'none' && (!accounts || accounts.length === 0)) {
-  // COMENTADO:     navigate('/');
-  // COMENTADO:   }
-  // COMENTADO: }, [accounts, inProgress, navigate]);
-
-  // COMENTADO: if (inProgress !== 'none') return null;
-  
-  const navigate = useNavigate();
   const [messages, setMessages] = useState([
     {
       id: 1,
@@ -106,8 +95,12 @@ const ChatInterface = () => {
       let chartData = null;
 
       if (data.type === 'success') {
-        // Formatear los datos para mostrarlos bonito
-        if (data.data && Array.isArray(data.data) && data.data.length > 0) {
+        // Si es respuesta de IA directa (source: ai-direct)
+        if (data.source === 'ai-direct' && data.response) {
+          assistantContent = data.response;
+        } 
+        // Si son resultados de SQL con datos
+        else if (data.data && Array.isArray(data.data) && data.data.length > 0) {
           assistantContent = `📊 **Resultado de la consulta:**\n\n`;
           assistantContent += `Se encontraron ${data.data.length} registros.\n\n`;
 

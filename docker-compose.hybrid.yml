@@ -1,3 +1,11 @@
+# docker-compose-hybrid.yml
+# Extiende docker-compose.yml para modo desarrollo híbrido:
+# mcp-sql corre en Windows nativo (Windows Auth real)
+# Todo lo demás en Docker
+
+# Uso:
+#   docker compose -f docker-compose.yml -f docker-compose-hybrid.yml up --build
+
 services:
   gateway:
     environment:

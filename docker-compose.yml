@@ -1,10 +1,13 @@
 services:
+
   backend:
     build: ./backend
     ports:
       - "3000:3000"
+    env_file:
+      - ./backend/.env
     healthcheck:
-      test: ["CMD", "node", "-e", "require('http').get('http://localhost:3000/health',res=>process.exit(res.statusCode===200?0:1)).on('error',()=>process.exit(1))"]
+      test: ["CMD","node","-e","require('http').get('http://localhost:3000/health',r=>process.exit(r.statusCode===200?0:1)).on('error',()=>process.exit(1))"]
       interval: 15s
       timeout: 5s
       retries: 5
@@ -18,7 +21,7 @@ services:
     ports:
       - "6000:6000"
     healthcheck:
-      test: ["CMD", "node", "-e", "require('http').get('http://localhost:6000/health',res=>process.exit(res.statusCode===200?0:1)).on('error',()=>process.exit(1))"]
+      test: ["CMD","node","-e","require('http').get('http://localhost:6000/health',r=>process.exit(r.statusCode===200?0:1)).on('error',()=>process.exit(1))"]
       interval: 15s
       timeout: 5s
       retries: 5
@@ -30,8 +33,15 @@ services:
       - "4000:4000"
     env_file:
       - ./gateway/.env
+    # mcp-sql corre en Windows nativo (fuera de Docker) →
+    # se accede vía host.docker.internal:5000
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    environment:
+      MCP_SQL_URL: http://host.docker.internal:5000
+      CONTEXT_RESOLVER_URL: http://context-resolver:6000
     healthcheck:
-      test: ["CMD", "node", "-e", "require('http').get('http://localhost:4000/health',res=>process.exit(res.statusCode===200?0:1)).on('error',()=>process.exit(1))"]
+      test: ["CMD","node","-e","require('http').get('http://localhost:4000/health',r=>process.exit(r.statusCode===200?0:1)).on('error',()=>process.exit(1))"]
       interval: 15s
       timeout: 5s
       retries: 5
@@ -40,13 +50,5 @@ services:
       context-resolver:
         condition: service_healthy
 
-  mcp-sql:
-    build: ./mcp-sql
-    ports:
-      - "5000:5000"
-    healthcheck:
-      test: ["CMD", "node", "-e", "require('http').get('http://localhost:5000/health',res=>process.exit(res.statusCode===200?0:1)).on('error',()=>process.exit(1))"]
-      interval: 15s
-      timeout: 5s
-      retries: 5
-      start_period: 10s
+  # mcp-sql NO está aquí — corre en Windows con: node src/index.js
+  # Puerto 5000 expuesto directamente en el host

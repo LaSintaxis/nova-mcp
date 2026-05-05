@@ -7,7 +7,7 @@ const AZURE_OPENAI_ENDPOINT = process.env.AZURE_OPENAI_ENDPOINT;
 const AZURE_OPENAI_API_KEY = process.env.AZURE_OPENAI_API_KEY;
 const AZURE_OPENAI_DEPLOYMENT = process.env.AZURE_OPENAI_DEPLOYMENT || "gpt-4.1-mini";
 const AZURE_OPENAI_API_VERSION = process.env.AZURE_OPENAI_API_VERSION || "2024-12-01-preview";
-const MCP_SQL_URL = process.env.MCP_SQL_URL || "http://mcp-sql:5000";
+const MCP_SQL_URL = process.env.MCP_SQL_URL || "http://localhost:5000";
 
 const app = express();
 app.use(express.json());
@@ -118,7 +118,7 @@ app.post("/execute", async (req, res) => {
 
   try {
     // 🔹 1. Resolver contexto (a qué servidor/db ir)
-    const contextResponse = await fetch("http://context-resolver:6000/resolve", {
+    const contextResponse = await fetch("http://localhost:6000/resolve", {
       method: "POST",
       headers: {
         "Content-Type": "application/json"
@@ -212,6 +212,54 @@ app.post("/execute", async (req, res) => {
     });
   }
 });
+
+
+// ============================================
+// NUEVO ENDPOINT: CHAT DIRECTO CON LA IA (SIN SQL)
+// ============================================
+app.post("/chat-direct", async (req, res) => {
+  const { message, context = {} } = req.body;
+
+  if (!message || typeof message !== "string") {
+    return res.status(400).json({
+      type: "error",
+      message: "El campo 'message' es obligatorio"
+    });
+  }
+
+  console.log("📝 Chat directo con IA:", message);
+
+  try {
+    // Llamar directamente a Azure OpenAI sin pasar por SQL
+    const prompt = `
+Eres un asistente de infraestructura de TI llamado Novachat.
+
+Eres amable, profesional y respondes en español.
+
+El usuario pregunta: "${message}"
+
+Responde de manera útil y clara.
+`;
+
+    const response = await callAzureOpenAIChatCompletion([
+      { role: "user", content: prompt }
+    ], 0.7);
+
+    res.json({
+      type: "success",
+      response: response,
+      source: "ai-direct"
+    });
+
+  } catch (error) {
+    console.error("Error en chat-direct:", error);
+    res.status(500).json({
+      type: "error",
+      message: error.message || "Error al comunicarse con la IA"
+    });
+  }
+});
+
 
 app.listen(4000, () => {
   console.log("MCP Gateway corriendo en puerto 4000 🚀");

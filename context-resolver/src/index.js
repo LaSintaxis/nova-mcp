@@ -4,27 +4,40 @@ const app = express();
 app.use(express.json());
 
 app.get("/health", (_req, res) => {
-  res.status(200).json({
-    ok: true,
-    service: "context-resolver"
-  });
+  res.status(200).json({ ok: true, service: "context-resolver" });
 });
 
-// 🔥 Simulación de metadata (luego lo movemos a DB o Azure DevOps)
+// ============================================
+// METADATA CON TUS BASES DE DATOS REALES
+// ============================================
+// Aquí pones los servidores y bases de datos que tienes en tu SQL Server local
 const metadata = [
   {
-    client: "empresaA",
+    client: "novasoft",
     server: "sql-01",
-    database: "ventas",
-    tables: ["ventas", "clientes"]
+    database: "prueba_mcp",
+    tables: ["Clientes", "PedidoDetalle", "Pedidos", "Productos"]
   },
   {
-    client: "empresaA",
-    server: "sql-02",
-    database: "crm",
-    tables: ["clientes", "contactos"]
+    client: "novasoft",
+    server: "sql-01",
+    database: "Northwind",
+    tables: ["Customers", "Orders", "Products", "Employees"]
+  },
+  {
+    client: "novasoft",
+    server: "sql-01",
+    database: "AdventureWorks",
+    tables: ["Person", "Sales", "Product"]
   }
+  // Agrega aquí todas las bases de datos que quieras consultar
 ];
+
+console.log("═════════════════════════════════════════════");
+console.log("🔧 Context Resolver");
+console.log(`📊 Bases de datos configuradas: ${metadata.length}`);
+metadata.forEach(m => console.log(`   - ${m.database} (${m.tables.length} tablas)`));
+console.log("═════════════════════════════════════════════");
 
 app.post("/resolve", (req, res) => {
   const { message = "", context = {} } = req.body;
@@ -38,29 +51,30 @@ app.post("/resolve", (req, res) => {
 
   const normalizedMessage = message.toLowerCase();
 
-  // 🔹 1. Filtrar por cliente si viene
+  // Filtrar por cliente (por defecto "novasoft" para pruebas)
   let candidates = metadata;
+  const client = context?.client || "novasoft";
+  candidates = candidates.filter(c => c.client === client);
 
-  if (context?.client) {
-    candidates = candidates.filter(c => c.client === context.client);
-  }
-
+  // Si se especifica servidor en contexto
   if (context?.server) {
     candidates = candidates.filter(c => c.server === context.server);
   }
 
+  // Si se especifica base de datos en contexto
   if (context?.database) {
     candidates = candidates.filter(c => c.database === context.database);
   }
 
-  // 🔹 2. Buscar coincidencias por texto
+  // Buscar coincidencias por texto (nombre de base de datos o tabla)
   const matches = candidates.filter(c =>
+    normalizedMessage.includes(c.database.toLowerCase()) ||
     c.tables.some(t => normalizedMessage.includes(t.toLowerCase()))
   );
 
+  // Si hay contexto directo (servidor y BD especificados)
   const hasDirectContext = Boolean(context?.server && context?.database);
-
-  if (matches.length === 0 && hasDirectContext) {
+  if (matches.length === 0 && hasDirectContext && candidates.length > 0) {
     const directTarget = candidates[0];
     if (directTarget) {
       return res.json({
@@ -75,7 +89,7 @@ app.post("/resolve", (req, res) => {
     }
   }
 
-  // 🔹 3. Resolver casos
+  // Caso: una coincidencia exacta
   if (matches.length === 1) {
     const selected = matches[0];
     const matchedTable = selected.tables.find(t => normalizedMessage.includes(t.toLowerCase())) || null;
@@ -86,28 +100,29 @@ app.post("/resolve", (req, res) => {
         client: selected.client,
         server: selected.server,
         database: selected.database,
-        table: context?.table || matchedTable
+        table: matchedTable
       }
     });
   }
 
+  // Caso: múltiples coincidencias
   if (matches.length > 1) {
     return res.json({
       resolved: false,
       ambiguity: true,
       options: matches.map(m => ({
-        client: m.client,
         database: m.database,
         server: m.server,
         tables: m.tables
       })),
-      message: "Se encontraron múltiples destinos posibles"
+      message: "Se encontraron múltiples bases de datos posibles. ¿Cuál quieres consultar?"
     });
   }
 
+  // No se encontró contexto
   return res.json({
     resolved: false,
-    message: "No se encontró contexto claro"
+    message: "No se encontró una base de datos clara. Por favor especifica: 'en la base de datos X, muéstrame...'"
   });
 });
 
