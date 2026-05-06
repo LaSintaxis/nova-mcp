@@ -7,15 +7,14 @@ const app = express();
 app.use(express.json());
 
 // ============================================
-// CONFIGURACIÓN DE CONEXIONES - WINDOWS AUTH
+// CONFIGURACIÓN DE CONEXIONES - SQL AUTHENTICATION
 // ============================================
-// Para desarrollo local con Windows Authentication
 const connectionConfigs = {
   "sql-01": {
     server: process.env.SQL_SERVER_01 || "E-23YP6S2",
     database: "master",
-    user: process.env.SQL_USER_01,
-    password: process.env.SQL_PASSWORD_01,
+    user: process.env.SQL_USER_01 || "sa",
+    password: process.env.SQL_PASSWORD_01 || "",
     options: {
       trustServerCertificate: true,
       encrypt: false,
@@ -25,9 +24,9 @@ const connectionConfigs = {
 };
 
 console.log("═════════════════════════════════════════════");
-console.log("🔧 MCP-SQL - Windows Authentication");
+console.log("🔧 MCP-SQL - SQL Authentication");
 console.log(`📡 Servidor: ${connectionConfigs["sql-01"].server}`);
-console.log(`🔐 Autenticación: Windows (trustedConnection)`);
+console.log(`🔐 Autenticación: SQL Server (usuario/contraseña)`);
 console.log("═════════════════════════════════════════════");
 
 // ============================================
@@ -80,18 +79,20 @@ function isQuerySafe(query) {
   const dangerousKeywords = [
     "DROP", "DELETE", "UPDATE", "INSERT", "ALTER", 
     "CREATE", "TRUNCATE", "EXEC", "EXECUTE", "xp_", 
-    "sp_", "INTO", "BACKUP", "RESTORE"
+    "sp_", "INTO", "BACKUP", "RESTORE", "USE"
   ];
   
-  const upperQuery = query.toUpperCase();
+  const upperQuery = query.toUpperCase().trim();
   
+  // Verificar palabras peligrosas
   for (const keyword of dangerousKeywords) {
     if (upperQuery.includes(keyword)) {
       return false;
     }
   }
   
-  return upperQuery.trim().startsWith("SELECT");
+  // Solo permitir SELECT
+  return upperQuery.startsWith("SELECT");
 }
 
 // ============================================
@@ -127,6 +128,7 @@ app.get("/databases", async (req, res) => {
 app.post("/query", async (req, res) => {
   const { query, database, connection } = req.body;
   
+  // La base de datos se especifica en el body, no en el SQL
   const targetDatabase = database || connection?.database || "master";
 
   if (!query || typeof query !== "string") {

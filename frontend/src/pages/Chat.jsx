@@ -70,6 +70,11 @@ const ChatInterface = () => {
       // COMENTADO:   throw new Error('No se pudo obtener token de autenticación');
       // COMENTADO: }
 
+      // Construir historial (últimos 20 mensajes incluyendo el actual)
+      const history = [...messages, userMessage]
+        .slice(-20)
+        .map(({ role, content }) => ({ role, content }));
+
       // Llamar al backend real
       const response = await fetch(`${BACKEND_URL}/chat`, {
         method: 'POST',
@@ -79,7 +84,7 @@ const ChatInterface = () => {
         },
         body: JSON.stringify({
           message: userQuestion,
-          context: {}
+          context: { history }
         })
       });
 
@@ -95,10 +100,14 @@ const ChatInterface = () => {
       let chartData = null;
 
       if (data.type === 'success') {
-        // Si es respuesta de IA directa (source: ai-direct)
-        if (data.source === 'ai-direct' && data.response) {
+        // PRIORIDAD 1: Si hay campo 'response' (viene del gateway)
+        if (data.response) {
           assistantContent = data.response;
-        } 
+        }
+        // PRIORIDAD 2: Si hay campo 'message'
+        else if (data.message) {
+          assistantContent = data.message;
+        }
         // Si son resultados de SQL con datos
         else if (data.data && Array.isArray(data.data) && data.data.length > 0) {
           assistantContent = `📊 **Resultado de la consulta:**\n\n`;
@@ -113,8 +122,8 @@ const ChatInterface = () => {
             assistantContent += `| ${headers.map(h => String(row[h] || '-').slice(0, 30)).join(' | ')} |\n`;
           });
 
-          if (data.data.length > 5) {
-            assistantContent += `\n*... y ${data.data.length - 5} registros más.*\n`;
+          if (data.data.length > 20) {
+            assistantContent += `\n*... y ${data.data.length - 20} registros más.*\n`;
           }
 
           // Si el usuario pidió gráfica o hay sugerencia
@@ -126,7 +135,7 @@ const ChatInterface = () => {
             };
           }
         } else {
-          assistantContent = `✅ Consulta ejecutada correctamente.\n\n${JSON.stringify(data, null, 2)}`;
+          assistantContent = "✅ Consulta ejecutada correctamente.";
         }
       } else if (data.type === 'ambiguity') {
         assistantContent = `🔍 **Hay múltiples opciones posibles:**\n\n`;
@@ -134,9 +143,14 @@ const ChatInterface = () => {
           assistantContent += `${idx + 1}. Servidor: ${opt.server}, Base de datos: ${opt.database}\n`;
         });
         assistantContent += `\nPor favor sé más específico sobre qué datos quieres consultar.`;
-      } else {
+      } else if (data.type === 'error') {
         assistantContent = `❌ **Error:** ${data.message || 'No se pudo procesar la consulta'}`;
       }
+      else {
+        assistantContent = `❌ **Error inesperado:** ${JSON.stringify(data)}`;
+      }
+
+
 
       const assistantMessage = {
         id: Date.now() + 1,
@@ -144,7 +158,7 @@ const ChatInterface = () => {
         content: assistantContent,
         chartData: chartData,
         metadata: {
-          tool_used: data.target?.database || 'sql',
+          source: data.source,
           duration_ms: Date.now() - userMessage.id
         }
       };
@@ -156,7 +170,7 @@ const ChatInterface = () => {
       setMessages(prev => [...prev, {
         id: Date.now() + 1,
         role: 'assistant',
-        content: `❌ **Error de conexión:** ${error.message}\n\nNo se pudo conectar con el servidor. Asegúrate de que el backend esté corriendo.`
+        content: `❌ **Error de conexión:** ${error.message}\n\nNo se pudo conectar con el servidor.`
       }]);
     } finally {
       setIsLoading(false);

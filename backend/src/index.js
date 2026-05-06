@@ -143,7 +143,6 @@ app.post("/chat", async (req, res) => {
   }
 
   try {
-    // Por ahora usar /chat-direct (IA sin SQL)
     // Luego cambiar a /execute cuando integres mcp-sql
     const response = await fetch("http://localhost:4000/execute", {
       method: "POST",

@@ -9,6 +9,13 @@ const AZURE_OPENAI_DEPLOYMENT = process.env.AZURE_OPENAI_DEPLOYMENT || "gpt-4.1-
 const AZURE_OPENAI_API_VERSION = process.env.AZURE_OPENAI_API_VERSION || "2024-12-01-preview";
 const MCP_SQL_URL = process.env.MCP_SQL_URL || "http://localhost:5000";
 
+// Configuración por defecto para SQL (único servidor)
+const DEFAULT_SQL_CONFIG = {
+  server: "sql-01",
+  database: process.env.DEFAULT_SQL_DATABASE || "prueba_mcp",
+  defaultTable: "clientes"
+};
+
 const app = express();
 app.use(express.json());
 
@@ -45,44 +52,97 @@ async function callAzureOpenAIChatCompletion(messages, temperature = 0.2) {
   return data?.choices?.[0]?.message?.content?.trim() || "";
 }
 
-
-async function generateSQL(message, target, table) {
+// ============================================
+// CLASIFICADOR DE INTENCIÓN
+// ============================================
+async function classifyIntent(message) {
   const prompt = `
-Eres un experto en SQL Server.
+Eres un clasificador. Determina si el usuario quiere CONSULTAR DATOS (SQL) o es una conversación general.
 
-Contexto:
-- Base de datos: ${target.database}
-- Tabla: ${table}
+RESPONDE SOLO con "sql" o "chat". Nada más.
 
-Reglas:
-- SOLO devuelve SQL válido
-- NO expliques nada
-- NO uses markdown
-- Usa SELECT
-- Limita resultados si aplica
+- "sql": si el usuario pregunta sobre: clientes, ventas, productos, reportes, bases de datos, tablas, registros, consultas, datos, información de la empresa.
+- "chat": si es un saludo, pregunta sobre ti, conversación general, agradecimiento, despedida, explicaciones, ayuda.
 
-Pregunta:
-${message}
+Ejemplos:
+- "Hola" → chat
+- "¿Cómo estás?" → chat
+- "Muéstrame los clientes" → sql
+- "¿Cuántas ventas hay?" → sql
+- "¿Qué puedes hacer?" → chat
+- "Gracias" → chat
+
+Mensaje: "${message}"
 `;
 
-  return callAzureOpenAIChatCompletion([
-    { role: "user", content: prompt }
-  ], 0.2);
+  try {
+    const content = await callAzureOpenAIChatCompletion([
+      { role: "user", content: prompt }
+    ], 0.1);
+
+    const result = content.toLowerCase();
+    return result === "sql";
+  } catch (error) {
+    console.error("Error clasificando intención:", error);
+    return false;
+  }
 }
 
+// ============================================
+// GENERAR SQL
+// ============================================
+// ============================================
+// GENERAR SQL - PROMPT MEJORADO
+// ============================================
+async function generateSQL(message, database, table) {
+  const prompt = `
+Eres un experto en SQL Server (T-SQL). Tu tarea es generar consultas SQL válidas.
 
-// Agrega esta función después de generateSQL
+CONTEXTO:
+- Base de datos: ${database}
+- Tabla sugerida: ${table}
 
+REGLAS ESTRICTAS:
+1. SOLO devuelve la consulta SQL, sin explicaciones, sin markdown, sin comillas triples
+2. Usa sintaxis T-SQL correcta para SQL Server
+3. TOP debe ir después de SELECT: SELECT TOP N * FROM tabla
+4. NUNCA pongas TOP al final de la consulta
+5. Para listar tablas, usa: SELECT * FROM ${database}.INFORMATION_SCHEMA.TABLES
+6. Para listar columnas, usa: SELECT * FROM ${database}.INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME='nombre'
+7. Limita resultados con TOP 100 (no LIMIT)
+8. Los nombres de tablas pueden tener esquema: [dbo].[Tabla]
+
+EJEMPLOS CORRECTOS:
+- SELECT TOP 10 * FROM [dbo].[Clientes]
+- SELECT TOP 100 * FROM ${database}.INFORMATION_SCHEMA.TABLES
+- SELECT TOP 5 Nombre, Email FROM [dbo].[Usuarios] WHERE Activo = 1
+
+RESPONDE SOLO CON EL SQL. NADA MÁS.
+
+Pregunta del usuario: ${message}
+`;
+
+  let sql = await callAzureOpenAIChatCompletion([
+    { role: "user", content: prompt }
+  ], 0.2);
+
+  // Limpiar posibles markdown
+  sql = sql.replace(/```sql\n?/gi, "").replace(/```\n?/g, "").trim();
+
+  return sql;
+}
+
+// ============================================
+// DETECTAR INTENCIÓN DE GRÁFICA
+// ============================================
 async function detectChartIntent(message) {
   const prompt = `
-Eres un clasificador. Determina si el usuario QUIERE EXPLÍCITAMENTE una gráfica.
+Eres un clasificador. Determina si el usuario QUIERE EXPLÍCITAMENTE una gráfica o visualización.
 
 Palabras clave que indican gráfica:
 - "gráfica", "gráfico", "grafica", "grafico"
-- "chart", "graph"
-- "visualiza", "visualización"
-- "muéstrame en forma de gráfica"
-- "dibuja", "plot"
+- "chart", "graph", "visualiza", "visualización"
+- "dibuja", "plot", "barra", "línea", "pastel"
 
 Responde SOLO con "true" o "false". Nada más.
 
@@ -97,127 +157,42 @@ Mensaje: "${message}"
   return result === "true";
 }
 
+// ============================================
+// CHAT DIRECTO (CONVERSACIÓN GENERAL)
+// ============================================
+async function chatDirect(message, history = []) {
+  const systemPrompt = `
+Eres un asistente de infraestructura de TI llamado Novachat.
 
+Eres amable, profesional y respondes en español.
+`;
 
+  const normalizedHistory = Array.isArray(history)
+    ? history
+        .filter(item => item?.role && item?.content)
+        .map(({ role, content }) => ({ role, content }))
+    : [];
+
+  const messages = [
+    { role: "system", content: systemPrompt.trim() },
+    ...normalizedHistory,
+    { role: "user", content: message }
+  ];
+
+  return callAzureOpenAIChatCompletion(messages, 0.7);
+}
+
+// ============================================
+// HEALTH CHECK
+// ============================================
 app.get("/health", (_req, res) => {
-  res.status(200).json({
-    ok: true,
-    service: "gateway"
-  });
+  res.status(200).json({ ok: true, service: "gateway" });
 });
 
+// ============================================
+// ENDPOINT PRINCIPAL: EXECUTE
+// ============================================
 app.post("/execute", async (req, res) => {
-  const { message, context } = req.body;
-
-  if (!message || typeof message !== "string") {
-    return res.status(400).json({
-      type: "error",
-      message: "El campo 'message' es obligatorio"
-    });
-  }
-
-  try {
-    // 🔹 1. Resolver contexto (a qué servidor/db ir)
-    const contextResponse = await fetch("http://localhost:6000/resolve", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json"
-      },
-      body: JSON.stringify({
-        message,
-        context
-      })
-    });
-
-    if (!contextResponse.ok) {
-      const contextErrorData = await contextResponse.json().catch(() => ({}));
-      return res.status(contextResponse.status).json({
-        type: "error",
-        message: contextErrorData?.message || "Fallo al resolver contexto",
-        details: contextErrorData
-      });
-    }
-
-    const contextData = await contextResponse.json();
-
-    // 🔴 Caso: no se pudo resolver
-    if (!contextData.resolved) {
-      if (contextData.ambiguity) {
-        return res.json({
-          type: "ambiguity",
-          message: "Hay múltiples opciones",
-          options: contextData.options
-        });
-      }
-
-      return res.json({
-        type: "error",
-        message: contextData.message
-      });
-    }
-
-    // 🔹 2. Contexto resuelto
-    const target = contextData.target;
-
-    console.log("Contexto resuelto:", target);
-
-    // 🔹 3. (Temporal) Generar query simple con contexto
-    const table = target.table || context?.table || "clientes";
-    const query = await generateSQL(message, target, table);
-
-    // 🔹 4. Llamar al MCP SQL
-    const response = await fetch(`${MCP_SQL_URL}/query`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json"
-      },
-      body: JSON.stringify({
-        query,
-        connection: {
-          server: target.server,
-          database: target.database
-        }
-      })
-    });
-
-    if (!response.ok) {
-      const sqlErrorData = await response.json().catch(() => ({}));
-      return res.status(response.status).json({
-        type: "error",
-        message: sqlErrorData?.message || "Fallo al ejecutar consulta SQL",
-        details: sqlErrorData,
-        target
-      });
-    }
-
-    const data = await response.json();
-
-    const wantsChart = await detectChartIntent(message);
-
-    res.json({
-      type: "success",
-      target,
-      query,
-      data: data.data,
-      wantsChart: wantsChart,  // ← Agrega esto
-      chartSuggestion: data.chartSuggestion  // ← Y esto
-    });
-
-  } catch (error) {
-    console.error("Error en gateway:", error);
-
-    res.status(500).json({
-      type: "error",
-      message: "Error en el gateway"
-    });
-  }
-});
-
-
-// ============================================
-// NUEVO ENDPOINT: CHAT DIRECTO CON LA IA (SIN SQL)
-// ============================================
-app.post("/chat-direct", async (req, res) => {
   const { message, context = {} } = req.body;
 
   if (!message || typeof message !== "string") {
@@ -227,40 +202,112 @@ app.post("/chat-direct", async (req, res) => {
     });
   }
 
-  console.log("📝 Chat directo con IA:", message);
-
   try {
-    // Llamar directamente a Azure OpenAI sin pasar por SQL
-    const prompt = `
-Eres un asistente de infraestructura de TI llamado Novachat.
+    // 1. CLASIFICAR INTENCIÓN
+    const isSQLQuery = await classifyIntent(message);
 
-Eres amable, profesional y respondes en español.
+    if (!isSQLQuery) {
+      console.log("💬 [GATEWAY] Chat general detectado");
+      const response = await chatDirect(message, context?.history);
 
-El usuario pregunta: "${message}"
+      return res.json({
+        type: "success",
+        response: response,
+        source: "chat"
+      });
+    }
 
-Responde de manera útil y clara.
-`;
+    // 2. ES CONSULTA SQL
+    console.log("📊 [GATEWAY] Consulta SQL detectada");
 
-    const response = await callAzureOpenAIChatCompletion([
-      { role: "user", content: prompt }
-    ], 0.7);
+    // Extraer base de datos mencionada en el mensaje (ej: "de la base de datos 'empresa1'")
+    const dbMatch = message.match(/(?:de la base de datos|en la base de datos|bd|database|db)\s+['\"]?(\w+)['\"]?/i);
+    const database = dbMatch ? dbMatch[1] : (context?.database || DEFAULT_SQL_CONFIG.database);
+    const table = context?.table || DEFAULT_SQL_CONFIG.defaultTable;
+
+    console.log(`📚 Base de datos detectada: ${database}`);
+
+    // Generar SQL
+    const query = await generateSQL(message, database, table);
+    console.log("📝 [GATEWAY] SQL generado:", query);
+
+    // Ejecutar en MCP-SQL
+    const sqlResponse = await fetch(`${MCP_SQL_URL}/query`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        query,
+        connection: {
+          server: DEFAULT_SQL_CONFIG.server,
+          database: database  // Pasar la BD correcta
+        }
+      })
+    });
+
+    if (!sqlResponse.ok) {
+      const sqlErrorData = await sqlResponse.json().catch(() => ({}));
+      return res.status(sqlResponse.status).json({
+        type: "error",
+        message: sqlErrorData?.message || "Fallo al ejecutar consulta SQL",
+        details: sqlErrorData
+      });
+    }
+
+    const data = await sqlResponse.json();
+
+    // Detectar si quiere gráfica
+    const wantsChart = await detectChartIntent(message);
+
+    // Formatear respuesta
+    let formattedResponse = "";
+    if (data.data && data.data.length > 0) {
+      formattedResponse = `📊 **Resultado de la consulta:**\n\n`;
+      formattedResponse += `Se encontraron ${data.data.length} registros.\n\n`;
+
+      const headers = Object.keys(data.data[0]);
+      formattedResponse += `| ${headers.join(' | ')} |\n`;
+      formattedResponse += `|${headers.map(() => '---').join('|')}|\n`;
+
+      data.data.slice(0, 10).forEach(row => {
+        formattedResponse += `| ${headers.map(h => String(row[h] || '-').slice(0, 30)).join(' | ')} |\n`;
+      });
+
+      if (data.data.length > 10) {
+        formattedResponse += `\n*... y ${data.data.length - 10} registros más.*\n`;
+      }
+    } else {
+      formattedResponse = "✅ Consulta ejecutada correctamente, pero no se encontraron resultados.";
+    }
 
     res.json({
       type: "success",
-      response: response,
-      source: "ai-direct"
+      response: formattedResponse,
+      source: "sql",
+      data: data.data,
+      wantsChart: wantsChart,
+      chartSuggestion: data.chartSuggestion,
+      metadata: {
+        query: query,
+        database: database,
+        rowCount: data.rowCount
+      }
     });
 
   } catch (error) {
-    console.error("Error en chat-direct:", error);
+    console.error("❌ [GATEWAY] Error:", error);
     res.status(500).json({
       type: "error",
-      message: error.message || "Error al comunicarse con la IA"
+      message: "Error interno en el gateway",
+      details: error.message
     });
   }
 });
 
-
 app.listen(4000, () => {
-  console.log("MCP Gateway corriendo en puerto 4000 🚀");
+  console.log("\n═════════════════════════════════════════════");
+  console.log("🚀 MCP Gateway corriendo en puerto 4000");
+  console.log("📋 Endpoints:");
+  console.log("   POST /execute - Clasifica y ejecuta (chat o SQL)");
+  console.log("   GET  /health  - Verificar estado");
+  console.log("═════════════════════════════════════════════\n");
 });
