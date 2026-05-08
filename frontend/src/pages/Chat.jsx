@@ -1,15 +1,18 @@
 import { useState, useRef, useEffect } from 'react';
-// COMENTADO: import { useMsal } from '@azure/msal-react';
+import { useMsal } from '@azure/msal-react';          // ← descomentar
 import { useNavigate } from 'react-router-dom';
 import ChatHeader from '../components/ChatHeader';
 import MessageList from '../components/MessageList';
 import MessageInput from '../components/MessageInput';
-// COMENTADO: import { tokenRequest } from '../authConfig';
+import { tokenRequest } from '../authConfig';   
+
 
 // URL del backend (cambia según tu entorno)
 const BACKEND_URL = import.meta.env.VITE_BACKEND_URL || 'http://localhost:3000';
 
 const ChatInterface = () => {
+  const navigate = useNavigate();
+  const { instance, accounts } = useMsal();             
   const [messages, setMessages] = useState([
     {
       id: 1,
@@ -20,72 +23,57 @@ const ChatInterface = () => {
   const [isLoading, setIsLoading] = useState(false);
   const [inputValue, setInputValue] = useState('');
 
-  // COMENTADO: // Verificar si el usuario está autenticado
-  // COMENTADO: useEffect(() => {
-  // COMENTADO:   if (!accounts || accounts.length === 0) {
-  // COMENTADO:     navigate('/');
-  // COMENTADO:   }
-  // COMENTADO: }, [accounts, navigate]);
+  useEffect(() => {
+    if (!accounts || accounts.length === 0) {
+      navigate('/');
+    }
+  }, [accounts, navigate]);
 
-  // COMENTADO: // Obtener el token para las peticiones
-  // COMENTADO: const getToken = async () => {
-  // COMENTADO:   if (!accounts || accounts.length === 0) return null;
-  // COMENTADO: 
-  // COMENTADO:   try {
-  // COMENTADO:     const response = await instance.acquireTokenSilent({
-  // COMENTADO:       ...tokenRequest,
-  // COMENTADO:       account: accounts[0]
-  // COMENTADO:     });
-  // COMENTADO:     return response.accessToken;
-  // COMENTADO:   } catch (error) {
-  // COMENTADO:     console.error('Error obteniendo token:', error);
-  // COMENTADO:     // Si falla silencioso, intentamos con popup
-  // COMENTADO:     const response = await instance.acquireTokenPopup({
-  // COMENTADO:       ...tokenRequest,
-  // COMENTADO:       account: accounts[0]
-  // COMENTADO:     });
-  // COMENTADO:     return response.accessToken;
-  // COMENTADO:   }
-  // COMENTADO: };
+  // Obtener token para las peticiones al backend
+  const getToken = async () => {
+    if (!accounts || accounts.length === 0) return null;
+    try {
+      const response = await instance.acquireTokenSilent({
+        ...tokenRequest,
+        account: accounts[0]
+      });
+      console.log('Login exitoso. Token:', response.accessToken); // ← aquí
+      return response.accessToken;
+    } catch (error) {
+      console.error('Error obteniendo token silencioso:', error);
+      const response = await instance.acquireTokenPopup({
+        ...tokenRequest,
+        account: accounts[0]
+      });
+      console.log('Login exitoso. Token:', response.accessToken); // ← y aquí (fallback popup)
+      return response.accessToken;
+    }
+  };
 
   const handleSend = async () => {
     if (!inputValue.trim() || isLoading) return;
 
-    // Agregar mensaje del usuario
-    const userMessage = {
-      id: Date.now(),
-      role: 'user',
-      content: inputValue
-    };
+    const userMessage = { id: Date.now(), role: 'user', content: inputValue };
     setMessages(prev => [...prev, userMessage]);
     const userQuestion = inputValue;
     setInputValue('');
     setIsLoading(true);
 
     try {
-      // COMENTADO: // Obtener token de autenticación
-      // COMENTADO: const token = await getToken();
-      // COMENTADO: 
-      // COMENTADO: if (!token) {
-      // COMENTADO:   throw new Error('No se pudo obtener token de autenticación');
-      // COMENTADO: }
+      const token = await getToken();           // ← descomentar
+      if (!token) throw new Error('No se pudo obtener token de autenticación');
 
-      // Construir historial (últimos 20 mensajes incluyendo el actual)
       const history = [...messages, userMessage]
         .slice(-20)
         .map(({ role, content }) => ({ role, content }));
 
-      // Llamar al backend real
       const response = await fetch(`${BACKEND_URL}/chat`, {
         method: 'POST',
         headers: {
-          'Content-Type': 'application/json'
-          // COMENTADO: 'Authorization': `Bearer ${token}`
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`   // ← descomentar
         },
-        body: JSON.stringify({
-          message: userQuestion,
-          context: { history }
-        })
+        body: JSON.stringify({ message: userQuestion, context: { history } })
       });
 
       if (!response.ok) {
@@ -177,18 +165,12 @@ const ChatInterface = () => {
     }
   };
 
-  // COMENTADO: // Si no hay sesión, no mostrar nada (redirige el useEffect)
-  // COMENTADO: if (!accounts || accounts.length === 0) {
-  // COMENTADO:   return null;
-  // COMENTADO: }
+   // Si no hay sesión, no mostrar nada (redirige el useEffect)
+   if (!accounts || accounts.length === 0) return null;  // ← descomentar
 
-  // COMENTADO: // Obtener nombre del usuario autenticado
-  // COMENTADO: const userName = accounts[0]?.name || 'Usuario';
-  // COMENTADO: const userEmail = accounts[0]?.username || '';
-
-  // Usuario mock para pruebas sin autenticación
-  const userName = 'Usuario Prueba';
-  const userEmail = 'prueba@novasoft.com';
+  // Datos reales del usuario autenticado
+  const userName = accounts[0]?.name || 'Usuario';
+  const userEmail = accounts[0]?.username || '';
 
   return (
     <div className="app-container">
@@ -196,8 +178,7 @@ const ChatInterface = () => {
         userName={userName}
         userEmail={userEmail}
         onLogout={() => {
-          // COMENTADO: instance.logoutPopup().catch(console.error);
-          console.log('Logout - Modo prueba sin autenticación');
+          instance.logoutPopup().catch(console.error);
           navigate('/');
         }}
       />

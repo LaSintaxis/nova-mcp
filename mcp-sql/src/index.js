@@ -34,7 +34,7 @@ console.log("══════════════════════�
 // ============================================
 async function listDatabases() {
   const config = connectionConfigs["sql-01"];
-  
+
   try {
     const pool = await sql.connect(config);
     const result = await pool.request().query(`
@@ -60,7 +60,7 @@ async function executeQueryOnDatabase(databaseName, query) {
     ...connectionConfigs["sql-01"],
     database: databaseName
   };
-  
+
   try {
     const pool = await sql.connect(config);
     const result = await pool.request().query(query);
@@ -73,26 +73,105 @@ async function executeQueryOnDatabase(databaseName, query) {
 }
 
 // ============================================
+// FUNCIÓN PARA OBTENER ESQUEMA (TABLAS Y COLUMNAS)
+// ============================================
+async function getSchemaForDatabase(databaseName) {
+  const config = {
+    ...connectionConfigs["sql-01"],
+    database: databaseName
+  };
+
+  const schemaQuery = `
+    SELECT TABLE_SCHEMA, TABLE_NAME, COLUMN_NAME, DATA_TYPE
+    FROM INFORMATION_SCHEMA.COLUMNS
+    ORDER BY TABLE_SCHEMA, TABLE_NAME, ORDINAL_POSITION
+  `;
+
+  try {
+    const pool = await sql.connect(config);
+    const result = await pool.request().query(schemaQuery);
+    await pool.close();
+
+    const schemaMap = {};
+    result.recordset.forEach(row => {
+      const tableKey = `${row.TABLE_SCHEMA}.${row.TABLE_NAME}`;
+      if (!schemaMap[tableKey]) {
+        schemaMap[tableKey] = [];
+      }
+      schemaMap[tableKey].push({
+        name: row.COLUMN_NAME,
+        type: row.DATA_TYPE
+      });
+    });
+
+    return schemaMap;
+  } catch (error) {
+    console.error(`Error obteniendo esquema de ${databaseName}:`, error.message);
+    throw error;
+  }
+}
+
+// ============================================
 // VALIDACIÓN DE QUERIES (SEGURIDAD)
+// ============================================
+// ============================================
+// VALIDACIÓN DE QUERIES (SEGURIDAD) - MEJORADA
 // ============================================
 function isQuerySafe(query) {
   const dangerousKeywords = [
-    "DROP", "DELETE", "UPDATE", "INSERT", "ALTER", 
-    "CREATE", "TRUNCATE", "EXEC", "EXECUTE", "xp_", 
-    "sp_", "INTO", "BACKUP", "RESTORE", "USE"
+    "DROP", "DELETE", "UPDATE", "INSERT", "ALTER",
+    "CREATE", "TRUNCATE", "EXEC", "EXECUTE", "xp_",
+    "sp_", "INTO", "BACKUP", "RESTORE", "USE",
+    "WAITFOR", "RECEIVE", "ENABLE", "DISABLE", "REVERT"
   ];
-  
-  const upperQuery = query.toUpperCase().trim();
-  
-  // Verificar palabras peligrosas
+
+  // Limpiar la consulta
+  let cleanQuery = query;
+  cleanQuery = cleanQuery.replace(/--.*$/gm, "");  // Remover comentarios de línea
+  cleanQuery = cleanQuery.replace(/\/\*[\s\S]*?\*\//g, "");  // Remover comentarios bloque
+  cleanQuery = cleanQuery.trim();
+
+  const upperQuery = cleanQuery.toUpperCase();
+
+  // 1. Verificar palabras peligrosas
   for (const keyword of dangerousKeywords) {
     if (upperQuery.includes(keyword)) {
+      console.log(`🚫 Palabra peligrosa detectada: ${keyword}`);
       return false;
     }
   }
-  
-  // Solo permitir SELECT
-  return upperQuery.startsWith("SELECT");
+
+  // 2. Verificar que sea solo SELECT (puede tener WITH antes)
+  const selectIndex = upperQuery.indexOf("SELECT");
+  if (selectIndex === -1) {
+    console.log(`🚫 No se encontró SELECT en la consulta`);
+    return false;
+  }
+
+  // 3. Verificar que no haya ";" antes del SELECT (posible inyección)
+  const beforeSelect = upperQuery.substring(0, selectIndex);
+  if (beforeSelect.includes(";")) {
+    console.log(`🚫 Posible inyección SQL detectada (; antes de SELECT)`);
+    return false;
+  }
+
+  // 4. Verificar que no haya más de un statement (separado por ;)
+  const statements = upperQuery.split(";").filter(s => s.trim().length > 0);
+  if (statements.length > 1) {
+    console.log(`🚫 Múltiples statements no permitidos`);
+    return false;
+  }
+
+  // 5. Verificar que no tenga UNION con INSERT/DELETE/UPDATE
+  if (upperQuery.includes("UNION")) {
+    const unionPart = statements[0] || upperQuery;
+    if (unionPart.includes("INSERT") || unionPart.includes("DELETE") || unionPart.includes("UPDATE")) {
+      console.log(`🚫 UNION con operación peligrosa`);
+      return false;
+    }
+  }
+
+  return true;
 }
 
 // ============================================
@@ -105,7 +184,7 @@ app.get("/health", (_req, res) => {
 // Listar todas las bases de datos del servidor
 app.get("/databases", async (req, res) => {
   console.log("📡 Solicitando listado de bases de datos...");
-  
+
   try {
     const databases = await listDatabases();
     res.json({
@@ -124,10 +203,34 @@ app.get("/databases", async (req, res) => {
   }
 });
 
+// Obtener esquema (tablas/columnas) de una base de datos
+app.get("/schema", async (req, res) => {
+  const database = req.query.database || "master";
+  console.log(`📚 Solicitando esquema de: ${database}`);
+
+  try {
+    const schema = await getSchemaForDatabase(database);
+    res.json({
+      success: true,
+      database,
+      schema
+    });
+  } catch (error) {
+    console.error("Error obteniendo esquema:", error);
+    res.status(500).json({
+      success: false,
+      message: "Error obteniendo esquema",
+      error: error.message,
+      code: error.code
+    });
+  }
+});
+
+
 // Ejecutar query en una base de datos específica
 app.post("/query", async (req, res) => {
   const { query, database, connection } = req.body;
-  
+
   // La base de datos se especifica en el body, no en el SQL
   const targetDatabase = database || connection?.database || "master";
 
@@ -151,12 +254,12 @@ app.post("/query", async (req, res) => {
 
   try {
     const result = await executeQueryOnDatabase(targetDatabase, query);
-    
+
     const columns = result.recordset[0] ? Object.keys(result.recordset[0]) : [];
-    const hasNumericColumn = columns.some(col => 
+    const hasNumericColumn = columns.some(col =>
       typeof result.recordset[0]?.[col] === 'number'
     );
-    const hasStringColumn = columns.some(col => 
+    const hasStringColumn = columns.some(col =>
       typeof result.recordset[0]?.[col] === 'string'
     );
 
@@ -205,6 +308,76 @@ app.get("/test-connection", async (req, res) => {
     });
   }
 });
+
+
+
+// ============================================
+// FUNCIÓN PARA OBTENER RELACIONES (FK)
+// ============================================
+async function getRelationsForDatabase(databaseName) {
+  const config = {
+    ...connectionConfigs["sql-01"],
+    database: databaseName
+  };
+
+  const relationsQuery = `
+    SELECT 
+      fk.name AS FK_Name,
+      OBJECT_NAME(fk.parent_object_id) AS TableName,
+      COL_NAME(fkc.parent_object_id, fkc.parent_column_id) AS ColumnName,
+      OBJECT_NAME(fk.referenced_object_id) AS ReferencedTableName,
+      COL_NAME(fkc.referenced_object_id, fkc.referenced_column_id) AS ReferencedColumnName
+    FROM sys.foreign_keys fk
+    INNER JOIN sys.foreign_key_columns fkc ON fk.object_id = fkc.constraint_object_id
+    ORDER BY TableName, ColumnName
+  `;
+
+  try {
+    const pool = await sql.connect(config);
+    const result = await pool.request().query(relationsQuery);
+    await pool.close();
+
+    const relations = {};
+    result.recordset.forEach(row => {
+      if (!relations[row.TableName]) {
+        relations[row.TableName] = [];
+      }
+      relations[row.TableName].push({
+        column: row.ColumnName,
+        references: row.ReferencedTableName,
+        referencesColumn: row.ReferencedColumnName
+      });
+    });
+
+    return relations;
+  } catch (error) {
+    console.error(`Error obteniendo relaciones de ${databaseName}:`, error.message);
+    return {};
+  }
+}
+
+// Nuevo endpoint para obtener relaciones
+app.get("/relations", async (req, res) => {
+  const database = req.query.database || "master";
+  console.log(`🔗 Solicitando relaciones de: ${database}`);
+
+  try {
+    const relations = await getRelationsForDatabase(database);
+    res.json({
+      success: true,
+      database,
+      relations
+    });
+  } catch (error) {
+    console.error("Error obteniendo relaciones:", error);
+    res.status(500).json({
+      success: false,
+      message: "Error obteniendo relaciones",
+      error: error.message
+    });
+  }
+});
+
 
 app.listen(5000, () => {
   console.log("\n🚀 MCP SQL corriendo en puerto 5000");

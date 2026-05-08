@@ -1,10 +1,11 @@
-import { useMsal } from '@azure/msal-react';
+import { useMsal, useIsAuthenticated } from '@azure/msal-react';  // ← añadir useIsAuthenticated
 import { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, Navigate } from 'react-router-dom';          // ← añadir Navigate
 import { employeeLoginRequest } from '../authConfig';
 import '../styles/Login.css';
 
 const Login = () => {
+
   const { instance } = useMsal();
   const navigate = useNavigate();
   const [isLoading, setIsLoading] = useState(false);
@@ -18,11 +19,9 @@ const Login = () => {
   // ============================================
   const handleMicrosoftLogin = async () => {
     setIsLoading(true);
-    
+
     try {
-      const loginResponse = await instance.loginPopup(employeeLoginRequest);
-      console.log('Empleado autenticado:', loginResponse.account);
-      navigate('/chat');
+      await instance.loginRedirect(employeeLoginRequest);
     } catch (error) {
       console.error('Error en SSO:', error);
       setIsLoading(false);
@@ -35,14 +34,14 @@ const Login = () => {
   // ============================================
   const handleClientLogin = async (event) => {
     event.preventDefault();
-    
+
     if (!clientUser.trim() || !clientPassword.trim()) {
       alert('Por favor ingrese usuario y contraseña');
       return;
     }
-    
+
     setClientLoading(true);
-    
+
     try {
       // Llamar al backend para autenticar al cliente
       const response = await fetch('http://localhost:3000/auth/client', {
@@ -53,25 +52,29 @@ const Login = () => {
           password: clientPassword
         })
       });
-      
+
       const data = await response.json();
-      
+
       if (!response.ok) {
         throw new Error(data.message || 'Error de autenticación');
       }
-      
+
       // Guardar token de cliente
       localStorage.setItem('client_token', data.token);
       localStorage.setItem('user_type', 'client');
-      
+
       navigate('/chat');
-      
+
     } catch (error) {
       console.error('Error en login de cliente:', error);
       alert('Error al iniciar sesión: ' + error.message);
       setClientLoading(false);
     }
   };
+
+  // Al inicio de Login, antes del return
+  const isAuthenticated = useIsAuthenticated();
+  if (isAuthenticated) return <Navigate to="/chat" replace />;
 
   return (
     <div className="login-container">
@@ -126,10 +129,10 @@ const Login = () => {
                 disabled={isLoading}
               >
                 <svg width="18" height="18" viewBox="0 0 18 18" fill="none" xmlns="http://www.w3.org/2000/svg">
-                  <rect x="1" y="1" width="7" height="7" fill="currentColor"/>
-                  <rect x="10" y="1" width="7" height="7" fill="currentColor"/>
-                  <rect x="1" y="10" width="7" height="7" fill="currentColor"/>
-                  <rect x="10" y="10" width="7" height="7" fill="currentColor"/>
+                  <rect x="1" y="1" width="7" height="7" fill="currentColor" />
+                  <rect x="10" y="1" width="7" height="7" fill="currentColor" />
+                  <rect x="1" y="10" width="7" height="7" fill="currentColor" />
+                  <rect x="10" y="10" width="7" height="7" fill="currentColor" />
                 </svg>
                 {isLoading ? 'Conectando...' : 'Iniciar sesión con Microsoft'}
               </button>
@@ -154,8 +157,8 @@ const Login = () => {
                   onChange={(event) => setClientPassword(event.target.value)}
                   disabled={clientLoading}
                 />
-                <button 
-                  className="microsoft-login-button" 
+                <button
+                  className="microsoft-login-button"
                   type="submit"
                   disabled={clientLoading}
                 >
@@ -166,8 +169,8 @@ const Login = () => {
 
             <div className="login-security-info">
               <svg width="16" height="16" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
-                <path d="M8 1L2 4v4c0 3.31 4 6 6 6s6-2.69 6-6V4l-6-3z" stroke="currentColor" strokeWidth="1.5" fill="none"/>
-                <path d="M5 8l2 2 4-4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
+                <path d="M8 1L2 4v4c0 3.31 4 6 6 6s6-2.69 6-6V4l-6-3z" stroke="currentColor" strokeWidth="1.5" fill="none" />
+                <path d="M5 8l2 2 4-4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
               </svg>
               <span>Sus datos están protegidos por Azure AD</span>
             </div>

@@ -9,6 +9,8 @@ const AZURE_OPENAI_DEPLOYMENT = process.env.AZURE_OPENAI_DEPLOYMENT || "gpt-4.1-
 const AZURE_OPENAI_API_VERSION = process.env.AZURE_OPENAI_API_VERSION || "2024-12-01-preview";
 const MCP_SQL_URL = process.env.MCP_SQL_URL || "http://localhost:5000";
 
+const SCHEMA_REFRESH_MS = 10 * 60 * 1000;
+
 // Configuración por defecto para SQL (único servidor)
 const DEFAULT_SQL_CONFIG = {
   server: "sql-01",
@@ -18,6 +20,9 @@ const DEFAULT_SQL_CONFIG = {
 
 const app = express();
 app.use(express.json());
+
+const schemaCache = new Map();
+const relationsCache = new Map();
 
 function isAzureOpenAIConfigured() {
   return Boolean(AZURE_OPENAI_ENDPOINT && AZURE_OPENAI_API_KEY && AZURE_OPENAI_DEPLOYMENT);
@@ -51,6 +56,107 @@ async function callAzureOpenAIChatCompletion(messages, temperature = 0.2) {
 
   return data?.choices?.[0]?.message?.content?.trim() || "";
 }
+
+async function fetchSchema(database) {
+  const url = `${MCP_SQL_URL}/schema?database=${encodeURIComponent(database)}`;
+  const response = await fetch(url);
+  const data = await response.json();
+
+  if (!response.ok || !data?.success) {
+    throw new Error(data?.message || "No se pudo obtener el esquema");
+  }
+
+  return data.schema || {};
+}
+
+async function fetchRelations(database) {
+  const url = `${MCP_SQL_URL}/relations?database=${encodeURIComponent(database)}`;
+  const response = await fetch(url);
+  const data = await response.json();
+
+  if (!response.ok || !data?.success) {
+    return {};
+  }
+
+  return data.relations || {};
+}
+
+// ============================================
+// FORMATO DE ESQUEMA CON DETECCIÓN DE RELACIONES
+// ============================================
+async function getSchemaWithRelations(database) {
+  // Obtener esquema
+  const schema = await getSchemaForDatabase(database);
+
+  // Obtener relaciones (FK) desde caché o fetch
+  let relations = relationsCache.get(database);
+  if (!relations) {
+    relations = await fetchRelations(database);
+    relationsCache.set(database, relations);
+  }
+
+  // Formatear esquema incluyendo relaciones
+  let schemaText = "";
+  for (const [table, columns] of Object.entries(schema)) {
+    const cols = columns.map(col => {
+      // Verificar si esta columna es FK
+      const isFk = relations[table]?.some(r => r.column === col.name);
+      if (isFk) {
+        const relation = relations[table].find(r => r.column === col.name);
+        return `${col.name} (${col.type}) 🔗 FK → ${relation.references}.${relation.referencesColumn}`;
+      }
+      // Marcar columnas que podrían ser FK por nombre (Id al final)
+      const isPotentialFk = col.name.endsWith('Id') || col.name.endsWith('ID');
+      if (isPotentialFk) {
+        return `${col.name} (${col.type}) 🔗 probable FK`;
+      }
+      return `${col.name} (${col.type})`;
+    }).join(", ");
+    schemaText += `- ${table}: ${cols}\n`;
+  }
+
+  // Agregar sugerencias de JOIN basadas en relaciones reales
+  const relationsList = Object.entries(relations);
+  if (relationsList.length > 0) {
+    schemaText += "\n🔗 RELACIONES DETECTADAS (FK):\n";
+    for (const [table, fks] of relationsList) {
+      for (const fk of fks) {
+        schemaText += `  - ${table}.${fk.column} → ${fk.references}.${fk.referencesColumn}\n`;
+      }
+    }
+  }
+
+  return schemaText;
+}
+
+async function getSchemaForDatabase(database) {
+  const cached = schemaCache.get(database);
+  if (cached) {
+    return cached;
+  }
+
+  const schema = await fetchSchema(database);
+  schemaCache.set(database, schema);
+  return schema;
+}
+
+async function refreshSchemaForDatabase(database) {
+  try {
+    const schema = await fetchSchema(database);
+    schemaCache.set(database, schema);
+    const relations = await fetchRelations(database);
+    relationsCache.set(database, relations);
+    console.log(`🔄 [GATEWAY] Esquema actualizado: ${database} (${Object.keys(schema).length} tablas, ${Object.keys(relations).length} relaciones)`);
+  } catch (error) {
+    console.warn(`⚠️ [GATEWAY] No se pudo actualizar esquema de ${database}:`, error.message);
+  }
+}
+
+setInterval(() => {
+  for (const database of schemaCache.keys()) {
+    refreshSchemaForDatabase(database);
+  }
+}, SCHEMA_REFRESH_MS);
 
 // ============================================
 // CLASIFICADOR DE INTENCIÓN
@@ -89,33 +195,81 @@ Mensaje: "${message}"
 }
 
 // ============================================
-// GENERAR SQL
+// FUNCIÓN PARA CORREGIR SQL AUTOMÁTICAMENTE
 // ============================================
+function fixSQL(sql) {
+  let fixed = sql;
+
+  // Eliminar TOP de consultas de agregación (COUNT, SUM, AVG, MIN, MAX)
+  const aggregateRegex = /SELECT\s+TOP\s+\d+\s+(COUNT|SUM|AVG|MIN|MAX|COUNT\s*\(|SUM\s*\()/i;
+  if (aggregateRegex.test(fixed)) {
+    fixed = fixed.replace(/TOP\s+\d+\s+/i, "");
+    console.log("🔧 [FIX] Eliminado TOP de consulta de agregación");
+  }
+
+  // Eliminar TOP cuando está después de SELECT pero antes de COUNT
+  const topBeforeAggregateRegex = /SELECT\s+TOP\s+\d+\s+(COUNT|SUM|AVG)/i;
+  if (topBeforeAggregateRegex.test(fixed)) {
+    fixed = fixed.replace(/TOP\s+\d+\s+/i, "");
+    console.log("🔧 [FIX] Eliminado TOP antes de función de agregación");
+  }
+
+  // Asegurar que comience con SELECT (si no tiene SELECT al inicio)
+  const trimmed = fixed.trim().toUpperCase();
+  if (!trimmed.startsWith("SELECT") && !trimmed.startsWith("WITH") && !trimmed.startsWith("UNION")) {
+    fixed = "SELECT " + fixed;
+    console.log("🔧 [FIX] Agregado SELECT al inicio");
+  }
+
+  // Eliminar múltiples SELECT anidados (SELECT SELECT)
+  fixed = fixed.replace(/SELECT\s+SELECT/i, "SELECT");
+
+  return fixed;
+}
+
 // ============================================
-// GENERAR SQL - PROMPT MEJORADO
+// GENERAR SQL - PROMPT CON JOIN AUTOMÁTICOS
 // ============================================
-async function generateSQL(message, database, table) {
+async function generateSQL(message, database, table, schemaText, historyText) {
   const prompt = `
-Eres un experto en SQL Server (T-SQL). Tu tarea es generar consultas SQL válidas.
+Eres un experto en SQL Server (T-SQL). Tu tarea es generar consultas SQL que sean LEGIBLES PARA USUARIOS NO TÉCNICOS.
 
 CONTEXTO:
 - Base de datos: ${database}
 - Tabla sugerida: ${table}
 
-REGLAS ESTRICTAS:
-1. SOLO devuelve la consulta SQL, sin explicaciones, sin markdown, sin comillas triples
-2. Usa sintaxis T-SQL correcta para SQL Server
-3. TOP debe ir después de SELECT: SELECT TOP N * FROM tabla
-4. NUNCA pongas TOP al final de la consulta
-5. Para listar tablas, usa: SELECT * FROM ${database}.INFORMATION_SCHEMA.TABLES
-6. Para listar columnas, usa: SELECT * FROM ${database}.INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME='nombre'
-7. Limita resultados con TOP 100 (no LIMIT)
-8. Los nombres de tablas pueden tener esquema: [dbo].[Tabla]
+ESQUEMA REAL (tablas, columnas y relaciones detectadas):
+${schemaText}
 
-EJEMPLOS CORRECTOS:
-- SELECT TOP 10 * FROM [dbo].[Clientes]
-- SELECT TOP 100 * FROM ${database}.INFORMATION_SCHEMA.TABLES
-- SELECT TOP 5 Nombre, Email FROM [dbo].[Usuarios] WHERE Activo = 1
+CONVERSACIÓN RECIENTE:
+${historyText}
+
+REGLAS ESTRICTAS PARA HACER LA RESPUESTA LEGIBLE:
+1. NUNCA devuelvas columnas que terminen en "Id" o "ID" (ej: ClienteId, ProductoId, PedidoId)
+2. En su lugar, usa JOINs para traer el NOMBRE o DESCRIPCIÓN de la tabla relacionada
+3. Usa las relaciones detectadas (🔗 FK) para saber qué columnas conectar
+4. Siempre intenta reemplazar campos ID por nombres legibles:
+   - ClienteId → traer Cliente.Nombre
+   - ProductoId → traer Producto.Nombre o Producto.Descripcion
+   - PedidoId → no es necesario mostrarlo, mejor muestra Fecha o referencia
+5. Los alias deben ser claros: "Cliente" en lugar de "c", "Producto" en lugar de "p"
+6. Si hay fecha, muéstrala en formato legible
+7. Si no hay un nombre descriptivo, al menos no muestres el ID
+
+EJEMPLO DE LO QUE DEBES GENERAR:
+✅ BUENO:
+SELECT TOP 10 
+    c.Nombre AS Cliente,
+    p.Fecha AS FechaPedido,
+    pr.Nombre AS Producto,
+    d.Cantidad
+FROM [dbo].[Pedidos] p
+INNER JOIN [dbo].[Clientes] c ON p.ClienteId = c.Id
+INNER JOIN [dbo].[DetallePedidos] d ON p.Id = d.PedidoId
+INNER JOIN [dbo].[Productos] pr ON d.ProductoId = pr.Id
+
+❌ MALO (MUESTRA IDs):
+SELECT TOP 10 ClienteId, ProductoId, PedidoId FROM [dbo].[Pedidos]
 
 RESPONDE SOLO CON EL SQL. NADA MÁS.
 
@@ -129,6 +283,17 @@ Pregunta del usuario: ${message}
   // Limpiar posibles markdown
   sql = sql.replace(/```sql\n?/gi, "").replace(/```\n?/g, "").trim();
 
+  // Aplicar correcciones automáticas
+  sql = fixSQL(sql);
+
+  // Verificar si la consulta contiene IDs sin JOIN (intentar corregir)
+  const hasIdColumn = /\b\w*[Ii]d\b/.test(sql);
+  const hasJoin = /\bJOIN\b/i.test(sql);
+
+  if (hasIdColumn && !hasJoin && !sql.toUpperCase().includes("COUNT")) {
+    console.log("⚠️ [GATEWAY] Posible consulta con IDs sin JOIN, puede ser poco legible");
+  }
+
   return sql;
 }
 
@@ -137,16 +302,24 @@ Pregunta del usuario: ${message}
 // ============================================
 async function detectChartIntent(message) {
   const prompt = `
-Eres un clasificador. Determina si el usuario QUIERE EXPLÍCITAMENTE una gráfica o visualización.
+Eres un clasificador MUY ESTRICTO. Determina si el usuario QUIERE EXPLÍCITAMENTE una gráfica o visualización.
 
-Palabras clave que indican gráfica:
+SOLO responde "true" si el usuario MENCIONA EXPLÍCITAMENTE una de estas palabras:
 - "gráfica", "gráfico", "grafica", "grafico"
-- "chart", "graph", "visualiza", "visualización"
-- "dibuja", "plot", "barra", "línea", "pastel"
+- "chart", "graph"
+- "visualiza", "visualización"
+- "dibuja", "plot", "barra", "línea", "pastel", "circular"
 
-Responde SOLO con "true" o "false". Nada más.
+Si el usuario solo pregunta por datos, estadísticas, números o listados, responde "false".
 
-Mensaje: "${message}"
+Ejemplos:
+- "Muéstrame una gráfica de ventas" → true
+- "Dame el gráfico de barras" → true
+- "¿Cuántos clientes hay?" → false
+- "Lista los productos" → false
+- "Visualiza los datos en una gráfica" → true
+
+Mensaje del usuario: "${message}"
 `;
 
   const content = await callAzureOpenAIChatCompletion([
@@ -154,6 +327,7 @@ Mensaje: "${message}"
   ], 0.1);
 
   const result = content.toLowerCase();
+  console.log(`📊 [GATEWAY] detectChartIntent: "${message.substring(0, 50)}..." → ${result}`);
   return result === "true";
 }
 
@@ -169,8 +343,8 @@ Eres amable, profesional y respondes en español.
 
   const normalizedHistory = Array.isArray(history)
     ? history
-        .filter(item => item?.role && item?.content)
-        .map(({ role, content }) => ({ role, content }))
+      .filter(item => item?.role && item?.content)
+      .map(({ role, content }) => ({ role, content }))
     : [];
 
   const messages = [
@@ -220,15 +394,23 @@ app.post("/execute", async (req, res) => {
     // 2. ES CONSULTA SQL
     console.log("📊 [GATEWAY] Consulta SQL detectada");
 
-    // Extraer base de datos mencionada en el mensaje (ej: "de la base de datos 'empresa1'")
+    // Extraer base de datos mencionada en el mensaje
     const dbMatch = message.match(/(?:de la base de datos|en la base de datos|bd|database|db)\s+['\"]?(\w+)['\"]?/i);
     const database = dbMatch ? dbMatch[1] : (context?.database || DEFAULT_SQL_CONFIG.database);
     const table = context?.table || DEFAULT_SQL_CONFIG.defaultTable;
 
     console.log(`📚 Base de datos detectada: ${database}`);
 
-    // Generar SQL
-    const query = await generateSQL(message, database, table);
+    // Obtener esquema real de la BD con relaciones
+    const schemaText = await getSchemaWithRelations(database);
+
+    const historyItems = Array.isArray(context?.history) ? context.history.slice(-10) : [];
+    const historyText = historyItems
+      .map(item => `- ${item.role}: ${item.content}`)
+      .join("\n");
+
+    // Generar SQL (con correcciones automáticas)
+    let query = await generateSQL(message, database, table, schemaText, historyText);
     console.log("📝 [GATEWAY] SQL generado:", query);
 
     // Ejecutar en MCP-SQL
@@ -239,7 +421,7 @@ app.post("/execute", async (req, res) => {
         query,
         connection: {
           server: DEFAULT_SQL_CONFIG.server,
-          database: database  // Pasar la BD correcta
+          database: database
         }
       })
     });
@@ -310,4 +492,6 @@ app.listen(4000, () => {
   console.log("   POST /execute - Clasifica y ejecuta (chat o SQL)");
   console.log("   GET  /health  - Verificar estado");
   console.log("═════════════════════════════════════════════\n");
+
+  refreshSchemaForDatabase(DEFAULT_SQL_CONFIG.database);
 });

@@ -20,6 +20,7 @@
   font-size: 0.9rem;
   white-space: pre-wrap;
   word-break: break-word;
+  overflow-x: hidden;
 }
 
 .message-bubble.user .message-content {
@@ -93,6 +94,65 @@
   border: none;
   height: 1px;
   background: var(--color-border);
+}
+
+/* ===== TABLAS RESPONSIVE ===== */
+.message-table-wrapper {
+  width: 100%;
+  overflow-x: auto;
+  margin: 0.75rem 0;
+  padding-bottom: 0.25rem;
+  max-width: 100%;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(48, 134, 171, 0.6) rgba(15, 23, 42, 0.4);
+}
+
+.message-table-wrapper::-webkit-scrollbar {
+  height: 8px;
+}
+
+.message-table-wrapper::-webkit-scrollbar-track {
+  background: rgba(15, 23, 42, 0.35);
+  border-radius: 999px;
+}
+
+.message-table-wrapper::-webkit-scrollbar-thumb {
+  background: linear-gradient(90deg, rgba(44, 160, 210, 0.9), rgba(15, 142, 201, 0.9));
+  border-radius: 999px;
+}
+
+.message-table-wrapper::-webkit-scrollbar-thumb:hover {
+  background: linear-gradient(90deg, rgba(52, 130, 165, 0.95), rgba(34, 133, 175, 0.95));
+}
+
+.message-table {
+  width: 100%;
+  border-collapse: collapse;
+  min-width: 520px;
+  font-size: 0.85rem;
+}
+
+.message-table th,
+.message-table td {
+  padding: 0.5rem 0.75rem;
+  border: 1px solid var(--color-border);
+  text-align: left;
+  white-space: nowrap;
+}
+
+.message-table th {
+  background: rgba(15, 23, 42, 0.6);
+  color: var(--color-accent);
+  font-weight: 600;
+}
+
+.message-bubble.user .message-table th {
+  background: rgba(255, 255, 255, 0.12);
+  color: #e3f5ff;
+}
+
+.message-table tbody tr:nth-child(even) {
+  background: rgba(255, 255, 255, 0.04);
 }
 
 /* Metadata del mensaje */
