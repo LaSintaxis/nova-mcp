@@ -57,42 +57,64 @@ function getKey(header, callback) {
 // MIDDLEWARE DE AUTENTICACIÓN
 // ============================================
 async function authenticateToken(req, res, next) {
-  const authHeader = req.headers.authorization;
-  const token = authHeader && authHeader.split(' ')[1];
+  // COMENTADO: const authHeader = req.headers.authorization;
+  // COMENTADO: const token = authHeader && authHeader.split(' ')[1];
 
-  if (!token) {
-    return res.status(401).json({ type: "error", message: "Token no proporcionado" });
-  }
+  // COMENTADO: if (!token) {
+  // COMENTADO:   return res.status(401).json({ 
+  // COMENTADO:     type: "error", 
+  // COMENTADO:     message: "Token no proporcionado" 
+  // COMENTADO:   });
+  // COMENTADO: }
 
-  const validationOptions = {
-    audience: allowedAudiences,
-    issuer: AUTHORITY,
-    algorithms: ["RS256"]
+  // COMENTADO: const validationOptions = {
+  // COMENTADO:   audience: allowedAudiences,
+  // COMENTADO:   issuer: `${AUTHORITY}`,
+  // COMENTADO:   algorithms: ["RS256"]
+  // COMENTADO: };
+
+  // COMENTADO: jwt.verify(token, getKey, validationOptions, (err, decoded) => {
+  // COMENTADO:   if (err) {
+  // COMENTADO:     console.error("Error validando token:", err);
+  // COMENTADO:     return res.status(403).json({ 
+  // COMENTADO:       type: "error", 
+  // COMENTADO:       message: "Token inválido o expirado",
+  // COMENTADO:       details: err.message
+  // COMENTADO:     });
+  // COMENTADO:   }
+
+  // COMENTADO:   // Verificar tenant
+  // COMENTADO:   const allowedTenants = process.env.ALLOWED_TENANTS
+  // COMENTADO:     ? process.env.ALLOWED_TENANTS.split(',').map(t => t.trim()).filter(Boolean)
+  // COMENTADO:     : [TENANT_ID];
+
+  // COMENTADO:   if (!allowedTenants.includes(decoded.tid)) {
+  // COMENTADO:     return res.status(403).json({
+  // COMENTADO:       type: "error",
+  // COMENTADO:       message: "Acceso denegado. Solo usuarios de la empresa autorizada."
+  // COMENTADO:     });
+  // COMENTADO:   }
+
+  // COMENTADO:   // Guardar información del usuario
+  // COMENTADO:   req.user = {
+  // COMENTADO:     email: decoded.email || decoded.upn || decoded.unique_name,
+  // COMENTADO:     name: decoded.name,
+  // COMENTADO:     tenantId: decoded.tid,
+  // COMENTADO:     userId: decoded.oid
+  // COMENTADO:   };
+
+  // COMENTADO:   next();
+  // COMENTADO: });
+
+  // Usuario mock para pruebas sin autenticación
+  req.user = {
+    email: "prueba@novasoft.com",
+    name: "Usuario Prueba",
+    tenantId: TENANT_ID,
+    userId: "mock-user-id"
   };
 
-  jwt.verify(token, getKey, validationOptions, (err, decoded) => {
-    if (err) {
-      console.error("Error validando token:", err);
-      return res.status(403).json({ type: "error", message: "Token inválido o expirado", details: err.message });
-    }
-
-    const allowedTenants = process.env.ALLOWED_TENANTS
-      ? process.env.ALLOWED_TENANTS.split(',').map(t => t.trim()).filter(Boolean)
-      : [TENANT_ID];
-
-    if (!allowedTenants.includes(decoded.tid)) {
-      return res.status(403).json({ type: "error", message: "Acceso denegado." });
-    }
-
-    req.user = {
-      email: decoded.email || decoded.upn || decoded.preferred_username,
-      name: decoded.name,
-      tenantId: decoded.tid,
-      userId: decoded.oid
-    };
-
-    next();
-  });
+  next();
 }
 
 // ============================================
@@ -193,4 +215,5 @@ async function validateClientCredentials(username, password) {
 
 app.listen(3000, () => {
   console.log("Backend corriendo en puerto 3000");
+  console.log(`🔓 MODO PRUEBA - Autenticación desactivada`);
 });

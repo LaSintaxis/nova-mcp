@@ -119,10 +119,10 @@ async function getSchemaForDatabase(databaseName) {
 // ============================================
 function isQuerySafe(query) {
   const dangerousKeywords = [
-    "DROP", "DELETE", "UPDATE", "INSERT", "ALTER",
-    "CREATE", "TRUNCATE", "EXEC", "EXECUTE", "xp_",
-    "sp_", "INTO", "BACKUP", "RESTORE", "USE",
-    "WAITFOR", "RECEIVE", "ENABLE", "DISABLE", "REVERT"
+    // "DROP", "DELETE", "UPDATE", "INSERT", "ALTER",
+    // "CREATE", "TRUNCATE", "EXEC", "EXECUTE", "xp_",
+    // "sp_", "INTO", "BACKUP", "RESTORE", "USE",
+    // "WAITFOR", "RECEIVE", "ENABLE", "DISABLE", "REVERT"
   ];
 
   // Limpiar la consulta

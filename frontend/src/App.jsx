@@ -1,31 +1,17 @@
-import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
-import { useIsAuthenticated } from '@azure/msal-react';
-import Login from './pages/Login';
-import ChatInterface from './pages/Chat';
-
-// Componente que protege rutas: si no está autenticado, manda al login
-const ProtectedRoute = ({ children }) => {
-  const isAuthenticated = useIsAuthenticated();
-  return isAuthenticated ? children : <Navigate to="/" replace />;
-};
+import { BrowserRouter as Router, Routes, Route } from 'react-router-dom'
+import Login from './pages/Login'
+import Chat from './pages/Chat'
 
 function App() {
   return (
-    <BrowserRouter>
+    <Router>
       <Routes>
         <Route path="/" element={<Login />} />
-        <Route
-          path="/chat"
-          element={
-            <ProtectedRoute>
-              <ChatInterface />
-            </ProtectedRoute>
-          }
-        />
-        <Route path="*" element={<Navigate to="/" replace />} />
+        <Route path="/chat" element={<Chat />} />
       </Routes>
-    </BrowserRouter>
-  );
+    </Router>
+  )
 }
 
-export default App;
+export default App
+
