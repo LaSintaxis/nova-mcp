@@ -20,6 +20,7 @@ const Login = () => {
     setIsLoading(true);
     
     try {
+      //Login con MSAL
       const loginResponse = await instance.loginPopup(employeeLoginRequest);
       console.log('Empleado autenticado:', loginResponse.account);
       navigate('/chat');

@@ -10,15 +10,56 @@ import MessageInput from '../components/MessageInput';
 const BACKEND_URL = import.meta.env.VITE_BACKEND_URL || 'http://localhost:3000';
 
 const ChatInterface = () => {
-  const [messages, setMessages] = useState([
-    {
-      id: 1,
-      role: 'assistant',
-      content: '¡Hola! Soy tu asistente de infraestructura de Novasoft.\n\nPuedo ayudarte con:\n 📊 Consultas y gráficas de datos de SQL\n 🖥️ Estado de servidores y máquinas virtuales\n\n¿Qué necesitas hoy?'
+  // Estado inicial desde localStorage o mensaje de bienvenida
+  const [messages, setMessages] = useState(() => {
+    try {
+      const saved = localStorage.getItem('chat_history');
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          return parsed;
+        }
+      }
+    } catch (err) {
+      console.warn('⚠️ No se pudo cargar historial desde localStorage:', err);
     }
-  ]);
+    // Mensaje de bienvenida por defecto
+    return [
+      {
+        id: 1,
+        role: 'assistant',
+        content: '¡Hola! Soy tu asistente de infraestructura de Novasoft.\n\nPuedo ayudarte con:\n 📊 Consultas y gráficas de datos de SQL\n 🖥️ Estado de servidores y máquinas virtuales\n\n¿Qué necesitas hoy?'
+      }
+    ];
+  });
   const [isLoading, setIsLoading] = useState(false);
   const [inputValue, setInputValue] = useState('');
+
+  // CARGAR historial desde localStorage al montar el componente
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem('chat_history');
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed) && parsed.length > 1) { // Más de solo el mensaje de bienvenida
+          setMessages(parsed);
+        }
+      }
+    } catch (err) {
+      console.warn('⚠️ Error cargando historial:', err);
+    }
+  }, []);
+
+  // GUARDAR historial en localStorage cuando cambian los mensajes
+  useEffect(() => {
+    try {
+      const toSave = messages.slice(-20); // Guardar solo últimos 20 mensajes
+      localStorage.setItem('chat_history', JSON.stringify(toSave));
+      console.log(`💾 Historial guardado (${toSave.length} mensajes)`);
+    } catch (err) {
+      console.warn('⚠️ Error guardando historial:', err);
+    }
+  }, [messages]);
 
   // COMENTADO: // Verificar si el usuario está autenticado
   // COMENTADO: useEffect(() => {
@@ -75,12 +116,12 @@ const ChatInterface = () => {
         .slice(-20)
         .map(({ role, content }) => ({ role, content }));
 
-      // Llamar al backend real
+      // Llamar al backend
       const response = await fetch(`${BACKEND_URL}/chat`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json'
-          // COMENTADO: 'Authorization': `Bearer ${token}`
+          // 'Authorization': `Bearer ${token}`
         },
         body: JSON.stringify({
           message: userQuestion,
@@ -214,5 +255,6 @@ const ChatInterface = () => {
     </div>
   );
 };
+
 
 export default ChatInterface;

@@ -8,11 +8,12 @@ const AZURE_OPENAI_API_KEY = process.env.AZURE_OPENAI_API_KEY;
 const AZURE_OPENAI_DEPLOYMENT = process.env.AZURE_OPENAI_DEPLOYMENT || "gpt-4.1-mini";
 const AZURE_OPENAI_API_VERSION = process.env.AZURE_OPENAI_API_VERSION || "2024-12-01-preview";
 const MCP_SQL_URL = process.env.MCP_SQL_URL || "http://localhost:5000";
+const CONTEXT_RESOLVER_URL = process.env.CONTEXT_RESOLVER_URL || "http://localhost:6000";
 
 const SCHEMA_REFRESH_MS = 10 * 60 * 1000;
 
 // Configuración por defecto para SQL (único servidor)
-const DEFAULT_SQL_CONFIG = {
+const  DEFAULT_SQL_CONFIG = {
   server: "sql-01",
   database: process.env.DEFAULT_SQL_DATABASE || "prueba_mcp",
   defaultTable: "clientes"
@@ -23,6 +24,10 @@ app.use(express.json());
 
 const schemaCache = new Map();
 const relationsCache = new Map();
+
+function getCacheKey(server, database) {
+  return `${server}::${database}`;
+}
 
 function isAzureOpenAIConfigured() {
   return Boolean(AZURE_OPENAI_ENDPOINT && AZURE_OPENAI_API_KEY && AZURE_OPENAI_DEPLOYMENT);
@@ -57,8 +62,104 @@ async function callAzureOpenAIChatCompletion(messages, temperature = 0.2) {
   return data?.choices?.[0]?.message?.content?.trim() || "";
 }
 
-async function fetchSchema(database) {
-  const url = `${MCP_SQL_URL}/schema?database=${encodeURIComponent(database)}`;
+// ============================================
+// FAST-PATH ROUTER: DETECTAR CONSULTAS ADMIN
+// ============================================
+function detectAdminQuery(message) {
+  const adminPatterns = [
+    /listar\s+bases/i,
+    /list\s+databases/i,
+    /mostrar\s+servidores/i,
+    /show\s+servers/i,
+    /que\s+servidores/i,
+    /que\s+bases\s+de\s+datos/i,
+    /cuales\s+son\s+las\s+bases/i,
+    /databases/i,
+    /servidores\s+disponibles/i,
+    /bases\s+disponibles/i,
+    /listar\s+tablas/i,
+    /list\s+tables/i,
+    /mostrar\s+tablas/i
+  ];
+
+  return adminPatterns.some(pattern => pattern.test(message));
+}
+
+async function handleAdminQuery(message, context = {}) {
+  console.log("⚡ [GATEWAY] Fast-path: Consulta administrativa detectada");
+
+  try {
+    // Extraer servidor si viene especificado
+    const serverMatch = message.match(/sql-(\d+)|servidor\s+(\w+)/i);
+    const server = serverMatch 
+      ? `sql-${serverMatch[1] || serverMatch[2]}`
+      : null;
+
+    if (!server) {
+      // Retornar todos los servidores/bases disponibles
+      const dbResponse = await fetch(`${MCP_SQL_URL}/databases/all`, {
+        headers: { "Content-Type": "application/json" }
+      });
+
+      if (!dbResponse.ok) {
+        throw new Error("No se pudieron obtener las bases de datos");
+      }
+
+      const dbData = await dbResponse.json();
+      let response = "📊 **Servidores y bases de datos disponibles:**\n\n";
+
+      if (dbData.servers && Object.keys(dbData.servers).length > 0) {
+        for (const [srv, dbs] of Object.entries(dbData.servers)) {
+          response += `**${srv}**: ${dbs.join(", ")}\n\n`;
+        }
+      } else {
+        response = dbData.message || "No hay bases de datos disponibles.";
+      }
+
+      return {
+        type: "success",
+        response: response,
+        source: "admin"
+      };
+    } else {
+      // Retornar bases de datos del servidor específico
+      const dbResponse = await fetch(
+        `${MCP_SQL_URL}/databases?server=${encodeURIComponent(server)}`,
+        { headers: { "Content-Type": "application/json" } }
+      );
+
+      if (!dbResponse.ok) {
+        throw new Error(`No se pudo obtener bases de datos para ${server}`);
+      }
+
+      const dbData = await dbResponse.json();
+      let response = `📊 **Bases de datos en ${server}:**\n\n`;
+
+      if (Array.isArray(dbData.databases)) {
+        response += dbData.databases.map(db => `- ${db}`).join("\n");
+      } else {
+        response = dbData.message || "No hay bases de datos en este servidor.";
+      }
+
+      return {
+        type: "success",
+        response: response,
+        source: "admin"
+      };
+    }
+
+  } catch (error) {
+    console.error("❌ [GATEWAY] Error en fast-path admin:", error);
+    return {
+      type: "error",
+      message: `Error al obtener información: ${error.message}`,
+      source: "admin"
+    };
+  }
+}
+
+async function fetchSchema(server, database) {
+  const url = `${MCP_SQL_URL}/schema?server=${encodeURIComponent(server)}&database=${encodeURIComponent(database)}`;
   const response = await fetch(url);
   const data = await response.json();
 
@@ -69,8 +170,8 @@ async function fetchSchema(database) {
   return data.schema || {};
 }
 
-async function fetchRelations(database) {
-  const url = `${MCP_SQL_URL}/relations?database=${encodeURIComponent(database)}`;
+async function fetchRelations(server, database) {
+  const url = `${MCP_SQL_URL}/relations?server=${encodeURIComponent(server)}&database=${encodeURIComponent(database)}`;
   const response = await fetch(url);
   const data = await response.json();
 
@@ -84,15 +185,16 @@ async function fetchRelations(database) {
 // ============================================
 // FORMATO DE ESQUEMA CON DETECCIÓN DE RELACIONES
 // ============================================
-async function getSchemaWithRelations(database) {
+async function getSchemaWithRelations(server, database) {
   // Obtener esquema
-  const schema = await getSchemaForDatabase(database);
+  const schema = await getSchemaForDatabase(server, database);
 
   // Obtener relaciones (FK) desde caché o fetch
-  let relations = relationsCache.get(database);
+  const cacheKey = getCacheKey(server, database);
+  let relations = relationsCache.get(cacheKey);
   if (!relations) {
-    relations = await fetchRelations(database);
-    relationsCache.set(database, relations);
+    relations = await fetchRelations(server, database);
+    relationsCache.set(cacheKey, relations);
   }
 
   // Formatear esquema incluyendo relaciones
@@ -129,32 +231,35 @@ async function getSchemaWithRelations(database) {
   return schemaText;
 }
 
-async function getSchemaForDatabase(database) {
-  const cached = schemaCache.get(database);
+async function getSchemaForDatabase(server, database) {
+  const cacheKey = getCacheKey(server, database);
+  const cached = schemaCache.get(cacheKey);
   if (cached) {
     return cached;
   }
 
-  const schema = await fetchSchema(database);
-  schemaCache.set(database, schema);
+  const schema = await fetchSchema(server, database);
+  schemaCache.set(cacheKey, schema);
   return schema;
 }
 
-async function refreshSchemaForDatabase(database) {
+async function refreshSchemaForDatabase(server, database) {
   try {
-    const schema = await fetchSchema(database);
-    schemaCache.set(database, schema);
-    const relations = await fetchRelations(database);
-    relationsCache.set(database, relations);
-    console.log(`🔄 [GATEWAY] Esquema actualizado: ${database} (${Object.keys(schema).length} tablas, ${Object.keys(relations).length} relaciones)`);
+    const schema = await fetchSchema(server, database);
+    const relations = await fetchRelations(server, database);
+    const cacheKey = getCacheKey(server, database);
+    schemaCache.set(cacheKey, schema);
+    relationsCache.set(cacheKey, relations);
+    console.log(`🔄 [GATEWAY] Esquema actualizado: ${server}/${database} (${Object.keys(schema).length} tablas, ${Object.keys(relations).length} relaciones)`);
   } catch (error) {
-    console.warn(`⚠️ [GATEWAY] No se pudo actualizar esquema de ${database}:`, error.message);
+    console.warn(`⚠️ [GATEWAY] No se pudo actualizar esquema de ${server}/${database}:`, error.message);
   }
 }
 
 setInterval(() => {
-  for (const database of schemaCache.keys()) {
-    refreshSchemaForDatabase(database);
+  for (const cacheKey of schemaCache.keys()) {
+    const [server, database] = cacheKey.split("::");
+    refreshSchemaForDatabase(server, database);
   }
 }, SCHEMA_REFRESH_MS);
 
@@ -356,6 +461,21 @@ Eres amable, profesional y respondes en español.
   return callAzureOpenAIChatCompletion(messages, 0.7);
 }
 
+async function resolveContext(message, context) {
+  const response = await fetch(`${CONTEXT_RESOLVER_URL}/resolve`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ message, context })
+  });
+
+  const data = await response.json();
+  if (!response.ok) {
+    throw new Error(data?.message || "No se pudo resolver el contexto");
+  }
+
+  return data;
+}
+
 // ============================================
 // HEALTH CHECK
 // ============================================
@@ -377,6 +497,12 @@ app.post("/execute", async (req, res) => {
   }
 
   try {
+    // 0. FAST-PATH: DETECTAR CONSULTAS ADMIN
+    if (detectAdminQuery(message)) {
+      const adminResult = await handleAdminQuery(message, context);
+      return res.json(adminResult);
+    }
+
     // 1. CLASIFICAR INTENCIÓN
     const isSQLQuery = await classifyIntent(message);
 
@@ -394,15 +520,31 @@ app.post("/execute", async (req, res) => {
     // 2. ES CONSULTA SQL
     console.log("📊 [GATEWAY] Consulta SQL detectada");
 
-    // Extraer base de datos mencionada en el mensaje
-    const dbMatch = message.match(/(?:de la base de datos|en la base de datos|bd|database|db)\s+['\"]?(\w+)['\"]?/i);
-    const database = dbMatch ? dbMatch[1] : (context?.database || DEFAULT_SQL_CONFIG.database);
-    const table = context?.table || DEFAULT_SQL_CONFIG.defaultTable;
+    const contextResult = await resolveContext(message, context);
+    if (!contextResult.resolved) {
+      if (contextResult.ambiguity) {
+        return res.json({
+          type: "ambiguity",
+          message: contextResult.message,
+          options: contextResult.options
+        });
+      }
 
-    console.log(`📚 Base de datos detectada: ${database}`);
+      return res.json({
+        type: "error",
+        message: contextResult.message
+      });
+    }
+
+    const target = contextResult.target || {};
+    const server = target.server || DEFAULT_SQL_CONFIG.server;
+    const database = target.database || DEFAULT_SQL_CONFIG.database;
+    const table = target.table || context?.table || DEFAULT_SQL_CONFIG.defaultTable;
+
+    console.log(`📚 Contexto resuelto: ${server}/${database}`);
 
     // Obtener esquema real de la BD con relaciones
-    const schemaText = await getSchemaWithRelations(database);
+    const schemaText = await getSchemaWithRelations(server, database);
 
     const historyItems = Array.isArray(context?.history) ? context.history.slice(-10) : [];
     const historyText = historyItems
@@ -420,7 +562,7 @@ app.post("/execute", async (req, res) => {
       body: JSON.stringify({
         query,
         connection: {
-          server: DEFAULT_SQL_CONFIG.server,
+          server: server,
           database: database
         }
       })
@@ -493,5 +635,5 @@ app.listen(4000, () => {
   console.log("   GET  /health  - Verificar estado");
   console.log("═════════════════════════════════════════════\n");
 
-  refreshSchemaForDatabase(DEFAULT_SQL_CONFIG.database);
+  refreshSchemaForDatabase(DEFAULT_SQL_CONFIG.server, DEFAULT_SQL_CONFIG.database);
 });

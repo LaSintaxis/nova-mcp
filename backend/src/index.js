@@ -120,19 +120,19 @@ async function authenticateToken(req, res, next) {
 // ============================================
 // RUTAS
 // ============================================
+//verificar que backend esté corriendo
 app.get("/health", (_req, res) => {
   res.status(200).json({ ok: true, service: "backend" });
 });
 
-app.post("/chat", authenticateToken, async (req, res) => {
-  // Versión sin autenticación
 
+
+app.post("/chat", authenticateToken, async (req, res) => {
   const { message, context = {} } = req.body;
 
   const enrichedContext = {
     ...context,
     user: req.user,
-    user: { email: "prueba@novasoft.com", name: "Usuario Prueba" }
   };
 
   if (!message || typeof message !== "string") {
@@ -143,8 +143,8 @@ app.post("/chat", authenticateToken, async (req, res) => {
   }
 
   try {
-    // Luego cambiar a /execute cuando integres mcp-sql
-    const response = await fetch("http://localhost:4000/execute", {
+    const gatewayUrl = process.env.GATEWAY_URL || "http://localhost:4000";
+    const response = await fetch(`${gatewayUrl}/execute`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ message, context: enrichedContext })
@@ -185,19 +185,21 @@ app.post("/auth/client", async (req, res) => {
   }
 
   try {
+    //aquí iría la lógica real de validación contra el directorio activo
     const isValid = await validateClientCredentials(username, password);
 
     if (!isValid) {
       return res.status(401).json({ message: "Credenciales inválidas" });
     }
 
+    //generar token JWT para el cliente
     const token = jwt.sign(
       {
         sub: username,
         userType: 'client',
         name: username.split('\\').pop() || username
       },
-      process.env.JWT_SECRET || 'tu-secreto-temporal',
+      process.env.JWT_SECRET || 'el-secreto-temporal',
       { expiresIn: '8h' }
     );
 
@@ -208,7 +210,9 @@ app.post("/auth/client", async (req, res) => {
   }
 });
 
+//funcion para validar credenciales de cliente (en producción, esto debería consultar el directorio activo)
 async function validateClientCredentials(username, password) {
+  //Aquí va la lógica real de validación contra el directorio activo
   console.log(`Validando cliente: ${username}`);
   return true;
 }

@@ -9,9 +9,63 @@ app.use(express.json());
 // ============================================
 // CONFIGURACIÓN DE CONEXIONES - SQL AUTHENTICATION
 // ============================================
-const connectionConfigs = {
-  "sql-01": {
-    server: process.env.SQL_SERVER_01 || "E-23YP6S2",
+// ============================================
+// CONFIGURACIÓN DE CONEXIONES - DINÁMICA
+// ============================================
+// Lee todas las variables que empiezan con SQL_SERVER_
+// Ejemplo:
+//   SQL_SERVER_01=192.168.1.10
+//   SQL_DATABASE_01=ventas
+//   SQL_USER_01=mcp_user
+//   SQL_PASSWORD_01=***
+//
+//   SQL_SERVER_02=192.168.1.11
+//   SQL_DATABASE_02=crm
+//   SQL_USER_02=mcp_user
+//   SQL_PASSWORD_02=***
+//
+//   SQL_SERVER_03=192.168.1.12
+//   ...
+//
+// El alias será "sql-01", "sql-02", "sql-03", etc.
+
+const connectionConfigs = {};
+
+// Recorrer todas las variables de entorno
+Object.keys(process.env).forEach(key => {
+  // Buscar variables como SQL_SERVER_01, SQL_SERVER_02, etc.
+  const match = key.match(/^SQL_SERVER_(\d+)$/);
+  if (match) {
+    const index = match[1];
+    const serverName = process.env[key];
+    const databaseName = process.env[`SQL_DATABASE_${index}`] || "master";
+    const userName = process.env[`SQL_USER_${index}`];
+    const password = process.env[`SQL_PASSWORD_${index}`];
+    
+    // Solo agregar si tiene usuario y contraseña (o está configurado)
+    if (serverName && userName && password) {
+      const alias = `sql-${index}`;
+      connectionConfigs[alias] = {
+        server: serverName,
+        database: databaseName,
+        user: userName,
+        password: password,
+        options: {
+          trustServerCertificate: true,
+          encrypt: false,  // Para red local, false. Para Azure, true
+          enableArithAbort: true
+        }
+      };
+      console.log(`✅ Configurado servidor: ${alias} -> ${serverName}/${databaseName}`);
+    }
+  }
+});
+
+// Si no hay servidores configurados, mostrar advertencia
+if (Object.keys(connectionConfigs).length === 0) {
+  console.warn("⚠️ No se encontraron servidores SQL configurados. Usando configuración por defecto.");
+  connectionConfigs["sql-01"] = {
+    server: process.env.SQL_SERVER_01 || "localhost",
     database: "master",
     user: process.env.SQL_USER_01 || "sa",
     password: process.env.SQL_PASSWORD_01 || "",
@@ -20,20 +74,26 @@ const connectionConfigs = {
       encrypt: false,
       enableArithAbort: true
     }
-  }
-};
+  };
+}
 
 console.log("═════════════════════════════════════════════");
-console.log("🔧 MCP-SQL - SQL Authentication");
-console.log(`📡 Servidor: ${connectionConfigs["sql-01"].server}`);
-console.log(`🔐 Autenticación: SQL Server (usuario/contraseña)`);
+console.log("🔧 MCP-SQL - SQL Authentication (Múltiples servidores)");
+console.log(`📡 Servidores configurados: ${Object.keys(connectionConfigs).length}`);
+Object.entries(connectionConfigs).forEach(([alias, config]) => {
+  console.log(`   - ${alias}: ${config.server}/${config.database}`);
+});
 console.log("═════════════════════════════════════════════");
 
 // ============================================
 // FUNCIÓN PARA LISTAR BASES DE DATOS
 // ============================================
-async function listDatabases() {
-  const config = connectionConfigs["sql-01"];
+function getServerConfig(serverAlias = "sql-01") {
+  return connectionConfigs[serverAlias] || connectionConfigs["sql-01"];
+}
+
+async function listDatabases(serverAlias = "sql-01") {
+  const config = getServerConfig(serverAlias);
 
   try {
     const pool = await sql.connect(config);
@@ -55,9 +115,9 @@ async function listDatabases() {
 // ============================================
 // FUNCIÓN PARA EJECUTAR QUERY EN UNA BD ESPECÍFICA
 // ============================================
-async function executeQueryOnDatabase(databaseName, query) {
+async function executeQueryOnDatabase(databaseName, query, serverAlias = "sql-01") {
   const config = {
-    ...connectionConfigs["sql-01"],
+    ...getServerConfig(serverAlias),
     database: databaseName
   };
 
@@ -75,9 +135,9 @@ async function executeQueryOnDatabase(databaseName, query) {
 // ============================================
 // FUNCIÓN PARA OBTENER ESQUEMA (TABLAS Y COLUMNAS)
 // ============================================
-async function getSchemaForDatabase(databaseName) {
+async function getSchemaForDatabase(databaseName, serverAlias = "sql-01") {
   const config = {
-    ...connectionConfigs["sql-01"],
+    ...getServerConfig(serverAlias),
     database: databaseName
   };
 
@@ -119,7 +179,7 @@ async function getSchemaForDatabase(databaseName) {
 // ============================================
 function isQuerySafe(query) {
   const dangerousKeywords = [
-    // "DROP", "DELETE", "UPDATE", "INSERT", "ALTER",
+    "DROP", "DELETE", "UPDATE", "INSERT", "ALTER",
     // "CREATE", "TRUNCATE", "EXEC", "EXECUTE", "xp_",
     // "sp_", "INTO", "BACKUP", "RESTORE", "USE",
     // "WAITFOR", "RECEIVE", "ENABLE", "DISABLE", "REVERT"
@@ -183,12 +243,14 @@ app.get("/health", (_req, res) => {
 
 // Listar todas las bases de datos del servidor
 app.get("/databases", async (req, res) => {
-  console.log("📡 Solicitando listado de bases de datos...");
+  const server = req.query.server || "sql-01";
+  console.log(`📡 Solicitando listado de bases de datos (${server})...`);
 
   try {
-    const databases = await listDatabases();
+    const databases = await listDatabases(server);
     res.json({
       success: true,
+      server,
       databases: databases,
       count: databases.length
     });
@@ -203,15 +265,46 @@ app.get("/databases", async (req, res) => {
   }
 });
 
+// Listar bases de datos de todos los servidores configurados
+app.get("/databases/all", async (_req, res) => {
+  console.log("📡 Solicitando listado de bases de datos (todos los servidores)...");
+
+  try {
+    const results = await Promise.all(
+      Object.keys(connectionConfigs).map(async (server) => {
+        try {
+          const databases = await listDatabases(server);
+          return { server, databases, count: databases.length, success: true };
+        } catch (error) {
+          return { server, databases: [], count: 0, success: false, error: error.message };
+        }
+      })
+    );
+
+    res.json({
+      success: true,
+      servers: results
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: "Error listando bases de datos",
+      error: error.message
+    });
+  }
+});
+
 // Obtener esquema (tablas/columnas) de una base de datos
 app.get("/schema", async (req, res) => {
   const database = req.query.database || "master";
-  console.log(`📚 Solicitando esquema de: ${database}`);
+  const server = req.query.server || "sql-01";
+  console.log(`📚 Solicitando esquema de: ${server}/${database}`);
 
   try {
-    const schema = await getSchemaForDatabase(database);
+    const schema = await getSchemaForDatabase(database, server);
     res.json({
       success: true,
+      server,
       database,
       schema
     });
@@ -233,6 +326,7 @@ app.post("/query", async (req, res) => {
 
   // La base de datos se especifica en el body, no en el SQL
   const targetDatabase = database || connection?.database || "master";
+  const targetServer = connection?.server || "sql-01";
 
   if (!query || typeof query !== "string") {
     return res.status(400).json({
@@ -249,11 +343,11 @@ app.post("/query", async (req, res) => {
     });
   }
 
-  console.log(`📡 Ejecutando query en: ${targetDatabase}`);
+  console.log(`📡 Ejecutando query en: ${targetServer}/${targetDatabase}`);
   console.log(`📝 Query: ${query.substring(0, 150)}...`);
 
   try {
-    const result = await executeQueryOnDatabase(targetDatabase, query);
+    const result = await executeQueryOnDatabase(targetDatabase, query, targetServer);
 
     const columns = result.recordset[0] ? Object.keys(result.recordset[0]) : [];
     const hasNumericColumn = columns.some(col =>
@@ -272,6 +366,7 @@ app.post("/query", async (req, res) => {
 
     res.json({
       success: true,
+      server: targetServer,
       database: targetDatabase,
       data: result.recordset,
       rowCount: result.recordset.length,
@@ -314,9 +409,9 @@ app.get("/test-connection", async (req, res) => {
 // ============================================
 // FUNCIÓN PARA OBTENER RELACIONES (FK)
 // ============================================
-async function getRelationsForDatabase(databaseName) {
+async function getRelationsForDatabase(databaseName, serverAlias = "sql-01") {
   const config = {
-    ...connectionConfigs["sql-01"],
+    ...getServerConfig(serverAlias),
     database: databaseName
   };
 
@@ -359,12 +454,14 @@ async function getRelationsForDatabase(databaseName) {
 // Nuevo endpoint para obtener relaciones
 app.get("/relations", async (req, res) => {
   const database = req.query.database || "master";
-  console.log(`🔗 Solicitando relaciones de: ${database}`);
+  const server = req.query.server || "sql-01";
+  console.log(`🔗 Solicitando relaciones de: ${server}/${database}`);
 
   try {
-    const relations = await getRelationsForDatabase(database);
+    const relations = await getRelationsForDatabase(database, server);
     res.json({
       success: true,
+      server,
       database,
       relations
     });
