@@ -6,9 +6,13 @@
     "docker:down": "docker compose down",
     "docker:up:hybrid": "docker compose -f docker-compose.yml -f docker-compose.hybrid.yml up -d --build backend context-resolver gateway",
     "docker:down:hybrid": "docker compose -f docker-compose.yml -f docker-compose.hybrid.yml down",
-    "mcp-sql:local": "npm --prefix mcp-sql run dev"
+    "mcp-sql:local": "npm --prefix mcp-sql run dev",
+    "dev:all": "concurrently --kill-others-on-fail --names \"backend,gateway,mcp-sql,frontend\" --prefix-colors \"yellow,cyan,magenta,green\" \"npm run dev --prefix backend\" \"npm run dev --prefix gateway\" \"npm run dev --prefix mcp-sql\" \"npm run dev --prefix frontend\""
   },
   "dependencies": {
     "react-router-dom": "^7.14.1"
+  },
+  "devDependencies": {
+    "concurrently": "^8.2.0"
   }
 }

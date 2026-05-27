@@ -1,11 +1,8 @@
-import { useMsal } from '@azure/msal-react';
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { employeeLoginRequest } from '../authConfig';
 import '../styles/Login.css';
 
 const Login = () => {
-  const { instance } = useMsal();
   const navigate = useNavigate();
   const [isLoading, setIsLoading] = useState(false);
   const [activeTab, setActiveTab] = useState('employees');
@@ -13,66 +10,6 @@ const Login = () => {
   const [clientPassword, setClientPassword] = useState('');
   const [clientLoading, setClientLoading] = useState(false);
 
-  // ============================================
-  // EMPLEADO: SSO con Microsoft Entra ID
-  // ============================================
-  const handleMicrosoftLogin = async () => {
-    setIsLoading(true);
-    
-    try {
-      //Login con MSAL
-      const loginResponse = await instance.loginPopup(employeeLoginRequest);
-      console.log('Empleado autenticado:', loginResponse.account);
-      navigate('/chat');
-    } catch (error) {
-      console.error('Error en SSO:', error);
-      setIsLoading(false);
-      alert('Error al iniciar sesión con Microsoft: ' + (error.errorMessage || error.message));
-    }
-  };
-
-  // ============================================
-  // CLIENTE: Usuario/contraseña de dominio
-  // ============================================
-  const handleClientLogin = async (event) => {
-    event.preventDefault();
-    
-    if (!clientUser.trim() || !clientPassword.trim()) {
-      alert('Por favor ingrese usuario y contraseña');
-      return;
-    }
-    
-    setClientLoading(true);
-    
-    try {
-      // Llamar al backend para autenticar al cliente
-      const response = await fetch('http://localhost:3000/auth/client', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          username: clientUser,
-          password: clientPassword
-        })
-      });
-      
-      const data = await response.json();
-      
-      if (!response.ok) {
-        throw new Error(data.message || 'Error de autenticación');
-      }
-      
-      // Guardar token de cliente
-      localStorage.setItem('client_token', data.token);
-      localStorage.setItem('user_type', 'client');
-      
-      navigate('/chat');
-      
-    } catch (error) {
-      console.error('Error en login de cliente:', error);
-      alert('Error al iniciar sesión: ' + error.message);
-      setClientLoading(false);
-    }
-  };
 
   return (
     <div className="login-container">
@@ -123,7 +60,6 @@ const Login = () => {
             {activeTab === 'employees' && (
               <button
                 className="microsoft-login-button"
-                onClick={handleMicrosoftLogin}
                 disabled={isLoading}
               >
                 <svg width="18" height="18" viewBox="0 0 18 18" fill="none" xmlns="http://www.w3.org/2000/svg">
@@ -138,11 +74,11 @@ const Login = () => {
 
             {/* CLIENTE: Usuario/contraseña */}
             {activeTab === 'clients' && (
-              <form className="client-login" onSubmit={handleClientLogin}>
+              <form className="client-login">
                 <input
                   type="text"
                   className="client-input"
-                  placeholder="Usuario de dominio (ej: empresa\\usuario)"
+                  placeholder="Usuario de dominio (ej: empresa\usuario)"
                   value={clientUser}
                   onChange={(event) => setClientUser(event.target.value)}
                   disabled={clientLoading}

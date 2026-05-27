@@ -1,487 +1,209 @@
-import express from "express";
-import sql from "mssql";
-import dotenv from "dotenv";
+// mcp-sql/index.js
+// Microservicio MCP para SQL Server
+// Lee todos los servidores del .env con prefijo SQL_SERVER_
+// Un mismo usuario/contraseña para todos los servidores
+
+import express from 'express';
+import { createRequire } from 'module';
+import dotenv from 'dotenv';
+import sql from 'mssql';
+
 dotenv.config();
 
 const app = express();
 app.use(express.json());
 
-// ============================================
-// CONFIGURACIÓN DE CONEXIONES - SQL AUTHENTICATION
-// ============================================
-// ============================================
-// CONFIGURACIÓN DE CONEXIONES - DINÁMICA
-// ============================================
-// Lee todas las variables que empiezan con SQL_SERVER_
-// Ejemplo:
-//   SQL_SERVER_01=192.168.1.10
-//   SQL_DATABASE_01=ventas
-//   SQL_USER_01=mcp_user
-//   SQL_PASSWORD_01=***
-//
-//   SQL_SERVER_02=192.168.1.11
-//   SQL_DATABASE_02=crm
-//   SQL_USER_02=mcp_user
-//   SQL_PASSWORD_02=***
-//
-//   SQL_SERVER_03=192.168.1.12
-//   ...
-//
-// El alias será "sql-01", "sql-02", "sql-03", etc.
-
-const connectionConfigs = {};
-
-// Recorrer todas las variables de entorno
-Object.keys(process.env).forEach(key => {
-  // Buscar variables como SQL_SERVER_01, SQL_SERVER_02, etc.
-  const match = key.match(/^SQL_SERVER_(\d+)$/);
-  if (match) {
-    const index = match[1];
-    const serverName = process.env[key];
-    const databaseName = process.env[`SQL_DATABASE_${index}`] || "master";
-    const userName = process.env[`SQL_USER_${index}`];
-    const password = process.env[`SQL_PASSWORD_${index}`];
-    
-    // Solo agregar si tiene usuario y contraseña (o está configurado)
-    if (serverName && userName && password) {
-      const alias = `sql-${index}`;
-      connectionConfigs[alias] = {
-        server: serverName,
-        database: databaseName,
-        user: userName,
-        password: password,
-        options: {
-          trustServerCertificate: true,
-          encrypt: false,  // Para red local, false. Para Azure, true
-          enableArithAbort: true
-        }
-      };
-      console.log(`✅ Configurado servidor: ${alias} -> ${serverName}/${databaseName}`);
+// ─────────────────────────────────────────
+// CARGA DINÁMICA DE SERVIDORES DESDE .env
+// Detecta automáticamente SQL_SERVER_01, SQL_SERVER_02, etc.
+// Para agregar un nuevo servidor: añadir SQL_SERVER_XX=<ip> al .env
+// ─────────────────────────────────────────
+function loadServersFromEnv() {
+  const servers = {};
+  for (const [key, value] of Object.entries(process.env)) {
+    if (key.startsWith('SQL_SERVER_') && value) {
+      const alias = key.replace('SQL_SERVER_', '').toLowerCase(); // "01", "02", etc.
+      servers[alias] = value.trim();
     }
   }
-});
+  return servers;
+}
 
-// Si no hay servidores configurados, mostrar advertencia
-if (Object.keys(connectionConfigs).length === 0) {
-  console.warn("⚠️ No se encontraron servidores SQL configurados. Usando configuración por defecto.");
-  connectionConfigs["sql-01"] = {
-    server: process.env.SQL_SERVER_01 || "localhost",
-    database: "master",
-    user: process.env.SQL_USER_01 || "sa",
-    password: process.env.SQL_PASSWORD_01 || "",
+const SQL_SERVERS = loadServersFromEnv(); 
+const SQL_USER = process.env.SQL_USER;
+const SQL_PASSWORD = process.env.SQL_PASSWORD;
+
+console.log(`[mcp-sql] Servidores cargados: ${JSON.stringify(SQL_SERVERS)}`);
+
+// Pool de conexiones por servidor (lazy init)
+const pools = {};
+
+async function getPool(serverAlias) {
+  if (pools[serverAlias]) return pools[serverAlias];
+
+  const serverAddress = SQL_SERVERS[serverAlias];
+  if (!serverAddress) throw new Error(`Servidor desconocido: ${serverAlias}`);
+
+  const config = {
+    user: SQL_USER,
+    password: SQL_PASSWORD,
+    server: serverAddress,
     options: {
+      encrypt: false,           // true si usas Azure SQL
       trustServerCertificate: true,
-      encrypt: false,
-      enableArithAbort: true
-    }
+    },
+    pool: {
+      max: 5,
+      min: 0,
+      idleTimeoutMillis: 30000,
+    },
+    connectionTimeout: 15000,
   };
+
+  // Crear un pool independiente por servidor. Usar sql.connect(config) crea un pool global
+  // que puede causar que todas las conexiones apunten al primer servidor conectado.
+  const pool = new sql.ConnectionPool(config);
+  await pool.connect();
+  pools[serverAlias] = pool;
+  console.log(`[mcp-sql] Pool creado para servidor: ${serverAlias} (${serverAddress})`);
+  return pool;
 }
 
-console.log("═════════════════════════════════════════════");
-console.log("🔧 MCP-SQL - SQL Authentication (Múltiples servidores)");
-console.log(`📡 Servidores configurados: ${Object.keys(connectionConfigs).length}`);
-Object.entries(connectionConfigs).forEach(([alias, config]) => {
-  console.log(`   - ${alias}: ${config.server}/${config.database}`);
+// ─────────────────────────────────────────
+// HEALTH CHECK
+// ─────────────────────────────────────────
+app.get('/health', (req, res) => {
+  res.json({
+    status: 'ok',
+    service: 'mcp-sql',
+    servers: Object.keys(SQL_SERVERS),
+  });
 });
-console.log("═════════════════════════════════════════════");
 
-// ============================================
-// FUNCIÓN PARA LISTAR BASES DE DATOS
-// ============================================
-function getServerConfig(serverAlias = "sql-01") {
-  return connectionConfigs[serverAlias] || connectionConfigs["sql-01"];
-}
+// ─────────────────────────────────────────
+// LISTAR SERVIDORES DISPONIBLES
+// ─────────────────────────────────────────
+app.get('/servers', (req, res) => {
+  const list = Object.entries(SQL_SERVERS).map(([alias, address]) => ({
+    alias,
+    address,
+  }));
+  res.json({ servers: list });
+});
 
-async function listDatabases(serverAlias = "sql-01") {
-  const config = getServerConfig(serverAlias);
+// ─────────────────────────────────────────
+// LISTAR BASES DE DATOS DE UN SERVIDOR
+// GET /databases?server=01
+// ─────────────────────────────────────────
+app.get('/databases', async (req, res) => {
+  const { server } = req.query;
+  if (!server) return res.status(400).json({ error: 'Parámetro server requerido' });
 
   try {
-    const pool = await sql.connect(config);
+    const pool = await getPool(server);
     const result = await pool.request().query(`
-      SELECT name, database_id, create_date 
-      FROM sys.databases 
-      WHERE state_desc = 'ONLINE'
-      AND name NOT IN ('master', 'tempdb', 'model', 'msdb')
+      SELECT name FROM sys.databases
+      WHERE name NOT IN ('master','tempdb','model','msdb')
       ORDER BY name
     `);
-    await pool.close();
-    return result.recordset;
-  } catch (error) {
-    console.error("Error listando bases de datos:", error.message);
-    throw error;
-  }
-}
-
-// ============================================
-// FUNCIÓN PARA EJECUTAR QUERY EN UNA BD ESPECÍFICA
-// ============================================
-async function executeQueryOnDatabase(databaseName, query, serverAlias = "sql-01") {
-  const config = {
-    ...getServerConfig(serverAlias),
-    database: databaseName
-  };
-
-  try {
-    const pool = await sql.connect(config);
-    const result = await pool.request().query(query);
-    await pool.close();
-    return result;
-  } catch (error) {
-    console.error(`Error en ${databaseName}:`, error.message);
-    throw error;
-  }
-}
-
-// ============================================
-// FUNCIÓN PARA OBTENER ESQUEMA (TABLAS Y COLUMNAS)
-// ============================================
-async function getSchemaForDatabase(databaseName, serverAlias = "sql-01") {
-  const config = {
-    ...getServerConfig(serverAlias),
-    database: databaseName
-  };
-
-  const schemaQuery = `
-    SELECT TABLE_SCHEMA, TABLE_NAME, COLUMN_NAME, DATA_TYPE
-    FROM INFORMATION_SCHEMA.COLUMNS
-    ORDER BY TABLE_SCHEMA, TABLE_NAME, ORDINAL_POSITION
-  `;
-
-  try {
-    const pool = await sql.connect(config);
-    const result = await pool.request().query(schemaQuery);
-    await pool.close();
-
-    const schemaMap = {};
-    result.recordset.forEach(row => {
-      const tableKey = `${row.TABLE_SCHEMA}.${row.TABLE_NAME}`;
-      if (!schemaMap[tableKey]) {
-        schemaMap[tableKey] = [];
-      }
-      schemaMap[tableKey].push({
-        name: row.COLUMN_NAME,
-        type: row.DATA_TYPE
-      });
-    });
-
-    return schemaMap;
-  } catch (error) {
-    console.error(`Error obteniendo esquema de ${databaseName}:`, error.message);
-    throw error;
-  }
-}
-
-// ============================================
-// VALIDACIÓN DE QUERIES (SEGURIDAD)
-// ============================================
-// ============================================
-// VALIDACIÓN DE QUERIES (SEGURIDAD) - MEJORADA
-// ============================================
-function isQuerySafe(query) {
-  const dangerousKeywords = [
-    "DROP", "DELETE", "UPDATE", "INSERT", "ALTER",
-    // "CREATE", "TRUNCATE", "EXEC", "EXECUTE", "xp_",
-    // "sp_", "INTO", "BACKUP", "RESTORE", "USE",
-    // "WAITFOR", "RECEIVE", "ENABLE", "DISABLE", "REVERT"
-  ];
-
-  // Limpiar la consulta
-  let cleanQuery = query;
-  cleanQuery = cleanQuery.replace(/--.*$/gm, "");  // Remover comentarios de línea
-  cleanQuery = cleanQuery.replace(/\/\*[\s\S]*?\*\//g, "");  // Remover comentarios bloque
-  cleanQuery = cleanQuery.trim();
-
-  const upperQuery = cleanQuery.toUpperCase();
-
-  // 1. Verificar palabras peligrosas
-  for (const keyword of dangerousKeywords) {
-    if (upperQuery.includes(keyword)) {
-      console.log(`🚫 Palabra peligrosa detectada: ${keyword}`);
-      return false;
-    }
-  }
-
-  // 2. Verificar que sea solo SELECT (puede tener WITH antes)
-  const selectIndex = upperQuery.indexOf("SELECT");
-  if (selectIndex === -1) {
-    console.log(`🚫 No se encontró SELECT en la consulta`);
-    return false;
-  }
-
-  // 3. Verificar que no haya ";" antes del SELECT (posible inyección)
-  const beforeSelect = upperQuery.substring(0, selectIndex);
-  if (beforeSelect.includes(";")) {
-    console.log(`🚫 Posible inyección SQL detectada (; antes de SELECT)`);
-    return false;
-  }
-
-  // 4. Verificar que no haya más de un statement (separado por ;)
-  const statements = upperQuery.split(";").filter(s => s.trim().length > 0);
-  if (statements.length > 1) {
-    console.log(`🚫 Múltiples statements no permitidos`);
-    return false;
-  }
-
-  // 5. Verificar que no tenga UNION con INSERT/DELETE/UPDATE
-  if (upperQuery.includes("UNION")) {
-    const unionPart = statements[0] || upperQuery;
-    if (unionPart.includes("INSERT") || unionPart.includes("DELETE") || unionPart.includes("UPDATE")) {
-      console.log(`🚫 UNION con operación peligrosa`);
-      return false;
-    }
-  }
-
-  return true;
-}
-
-// ============================================
-// ENDPOINTS
-// ============================================
-app.get("/health", (_req, res) => {
-  res.status(200).json({ ok: true, service: "mcp-sql" });
-});
-
-// Listar todas las bases de datos del servidor
-app.get("/databases", async (req, res) => {
-  const server = req.query.server || "sql-01";
-  console.log(`📡 Solicitando listado de bases de datos (${server})...`);
-
-  try {
-    const databases = await listDatabases(server);
-    res.json({
-      success: true,
-      server,
-      databases: databases,
-      count: databases.length
-    });
-  } catch (error) {
-    console.error("Error:", error);
-    res.status(500).json({
-      success: false,
-      message: "Error listando bases de datos",
-      error: error.message,
-      code: error.code
-    });
+    res.json({ server, databases: result.recordset.map(r => r.name) });
+  } catch (err) {
+    console.error(`[mcp-sql] Error listando DBs en ${server}:`, err.message);
+    res.status(500).json({ error: err.message });
   }
 });
 
-// Listar bases de datos de todos los servidores configurados
-app.get("/databases/all", async (_req, res) => {
-  console.log("📡 Solicitando listado de bases de datos (todos los servidores)...");
+// ─────────────────────────────────────────
+// LISTAR TABLAS DE UNA BASE DE DATOS
+// GET /tables?server=01&database=MiDB
+// ─────────────────────────────────────────
+app.get('/tables', async (req, res) => {
+  const { server, database } = req.query;
+  if (!server || !database) {
+    return res.status(400).json({ error: 'Parámetros server y database requeridos' });
+  }
 
   try {
-    const results = await Promise.all(
-      Object.keys(connectionConfigs).map(async (server) => {
-        try {
-          const databases = await listDatabases(server);
-          return { server, databases, count: databases.length, success: true };
-        } catch (error) {
-          return { server, databases: [], count: 0, success: false, error: error.message };
-        }
-      })
-    );
-
-    res.json({
-      success: true,
-      servers: results
-    });
-  } catch (error) {
-    res.status(500).json({
-      success: false,
-      message: "Error listando bases de datos",
-      error: error.message
-    });
+    const pool = await getPool(server);
+    const result = await pool.request().query(`
+      SELECT TABLE_SCHEMA, TABLE_NAME
+      FROM [${database}].INFORMATION_SCHEMA.TABLES
+      WHERE TABLE_TYPE = 'BASE TABLE'
+      ORDER BY TABLE_SCHEMA, TABLE_NAME
+    `);
+    res.json({ server, database, tables: result.recordset });
+  } catch (err) {
+    console.error(`[mcp-sql] Error listando tablas:`, err.message);
+    res.status(500).json({ error: err.message });
   }
 });
 
-// Obtener esquema (tablas/columnas) de una base de datos
-app.get("/schema", async (req, res) => {
-  const database = req.query.database || "master";
-  const server = req.query.server || "sql-01";
-  console.log(`📚 Solicitando esquema de: ${server}/${database}`);
+// ─────────────────────────────────────────
+// EJECUTAR QUERY
+// POST /query
+// Body: { server: "01", database: "MiDB", query: "SELECT TOP 10 * FROM Tabla" }
+// ─────────────────────────────────────────
+app.post('/query', async (req, res) => {
+  const { server, database, query } = req.body;
+
+  if (!server || !database || !query) {
+    return res.status(400).json({ error: 'Campos server, database y query son requeridos' });
+  }
+
+  // Seguridad básica: solo SELECT permitido (hasta que se implemente autorización por AD)
+  // const trimmed = query.trim().toUpperCase();
+  // if (!trimmed.startsWith('SELECT') && !trimmed.startsWith('WITH')) {
+  //   return res.status(403).json({
+  //     error: 'Solo consultas SELECT están permitidas en este momento',
+  //   });
+  // }
 
   try {
-    const schema = await getSchemaForDatabase(database, server);
+    const pool = await getPool(server);
+    const result = await pool
+      .request()
+      .query(`USE [${database}]; ${query}`);
+
     res.json({
       success: true,
       server,
       database,
-      schema
+      rowCount: result.recordset?.length ?? 0,
+      data: result.recordset ?? [],
     });
-  } catch (error) {
-    console.error("Error obteniendo esquema:", error);
-    res.status(500).json({
-      success: false,
-      message: "Error obteniendo esquema",
-      error: error.message,
-      code: error.code
-    });
+  } catch (err) {
+    console.error(`[mcp-sql] Error ejecutando query:`, err.message);
+    res.status(500).json({ error: err.message });
   }
 });
 
-
-// Ejecutar query en una base de datos específica
-app.post("/query", async (req, res) => {
-  const { query, database, connection } = req.body;
-
-  // La base de datos se especifica en el body, no en el SQL
-  const targetDatabase = database || connection?.database || "master";
-  const targetServer = connection?.server || "sql-01";
-
-  if (!query || typeof query !== "string") {
-    return res.status(400).json({
-      success: false,
-      message: "El campo 'query' es obligatorio"
-    });
+// ─────────────────────────────────────────
+// INTROSPECCIÓN: COLUMNAS DE UNA TABLA
+// GET /schema?server=01&database=MiDB&table=MiTabla
+// ─────────────────────────────────────────
+app.get('/schema', async (req, res) => {
+  const { server, database, table } = req.query;
+  if (!server || !database || !table) {
+    return res.status(400).json({ error: 'Parámetros server, database y table requeridos' });
   }
-
-  if (!isQuerySafe(query)) {
-    console.warn(`🚫 Query bloqueada: ${query.substring(0, 100)}...`);
-    return res.status(403).json({
-      success: false,
-      message: "Solo SELECT está autorizado"
-    });
-  }
-
-  console.log(`📡 Ejecutando query en: ${targetServer}/${targetDatabase}`);
-  console.log(`📝 Query: ${query.substring(0, 150)}...`);
 
   try {
-    const result = await executeQueryOnDatabase(targetDatabase, query, targetServer);
-
-    const columns = result.recordset[0] ? Object.keys(result.recordset[0]) : [];
-    const hasNumericColumn = columns.some(col =>
-      typeof result.recordset[0]?.[col] === 'number'
-    );
-    const hasStringColumn = columns.some(col =>
-      typeof result.recordset[0]?.[col] === 'string'
-    );
-
-    const chartSuggestion = (hasNumericColumn && hasStringColumn) ? {
-      possible: true,
-      xAxis: columns.find(col => typeof result.recordset[0]?.[col] === 'string'),
-      yAxis: columns.find(col => typeof result.recordset[0]?.[col] === 'number'),
-      type: "bar"
-    } : null;
-
-    res.json({
-      success: true,
-      server: targetServer,
-      database: targetDatabase,
-      data: result.recordset,
-      rowCount: result.recordset.length,
-      columns: columns,
-      chartSuggestion: chartSuggestion
-    });
-
-  } catch (error) {
-    console.error("Error ejecutando query:", error);
-    res.status(500).json({
-      success: false,
-      message: "Error ejecutando la consulta",
-      sqlError: error.message,
-      code: error.code
-    });
+    const pool = await getPool(server);
+    const result = await pool.request().query(`
+      SELECT COLUMN_NAME, DATA_TYPE, IS_NULLABLE, CHARACTER_MAXIMUM_LENGTH
+      FROM [${database}].INFORMATION_SCHEMA.COLUMNS
+      WHERE TABLE_NAME = '${table.replace(/'/g, "''")}'
+      ORDER BY ORDINAL_POSITION
+    `);
+    res.json({ server, database, table, columns: result.recordset });
+  } catch (err) {
+    console.error(`[mcp-sql] Error obteniendo schema:`, err.message);
+    res.status(500).json({ error: err.message });
   }
 });
 
-// Endpoint para probar conexión
-app.get("/test-connection", async (req, res) => {
-  try {
-    const databases = await listDatabases();
-    res.json({
-      success: true,
-      message: "Conexión exitosa",
-      databases: databases.map(db => db.name)
-    });
-  } catch (error) {
-    res.status(500).json({
-      success: false,
-      message: "Error de conexión",
-      error: error.message,
-      code: error.code
-    });
-  }
-});
-
-
-
-// ============================================
-// FUNCIÓN PARA OBTENER RELACIONES (FK)
-// ============================================
-async function getRelationsForDatabase(databaseName, serverAlias = "sql-01") {
-  const config = {
-    ...getServerConfig(serverAlias),
-    database: databaseName
-  };
-
-  const relationsQuery = `
-    SELECT 
-      fk.name AS FK_Name,
-      OBJECT_NAME(fk.parent_object_id) AS TableName,
-      COL_NAME(fkc.parent_object_id, fkc.parent_column_id) AS ColumnName,
-      OBJECT_NAME(fk.referenced_object_id) AS ReferencedTableName,
-      COL_NAME(fkc.referenced_object_id, fkc.referenced_column_id) AS ReferencedColumnName
-    FROM sys.foreign_keys fk
-    INNER JOIN sys.foreign_key_columns fkc ON fk.object_id = fkc.constraint_object_id
-    ORDER BY TableName, ColumnName
-  `;
-
-  try {
-    const pool = await sql.connect(config);
-    const result = await pool.request().query(relationsQuery);
-    await pool.close();
-
-    const relations = {};
-    result.recordset.forEach(row => {
-      if (!relations[row.TableName]) {
-        relations[row.TableName] = [];
-      }
-      relations[row.TableName].push({
-        column: row.ColumnName,
-        references: row.ReferencedTableName,
-        referencesColumn: row.ReferencedColumnName
-      });
-    });
-
-    return relations;
-  } catch (error) {
-    console.error(`Error obteniendo relaciones de ${databaseName}:`, error.message);
-    return {};
-  }
-}
-
-// Nuevo endpoint para obtener relaciones
-app.get("/relations", async (req, res) => {
-  const database = req.query.database || "master";
-  const server = req.query.server || "sql-01";
-  console.log(`🔗 Solicitando relaciones de: ${server}/${database}`);
-
-  try {
-    const relations = await getRelationsForDatabase(database, server);
-    res.json({
-      success: true,
-      server,
-      database,
-      relations
-    });
-  } catch (error) {
-    console.error("Error obteniendo relaciones:", error);
-    res.status(500).json({
-      success: false,
-      message: "Error obteniendo relaciones",
-      error: error.message
-    });
-  }
-});
-
-
-app.listen(5000, () => {
-  console.log("\n🚀 MCP SQL corriendo en puerto 5000");
-  console.log("\n📋 Endpoints disponibles:");
-  console.log("   GET  /databases        - Listar bases de datos");
-  console.log("   GET  /test-connection  - Probar conexión a SQL Server");
-  console.log("   POST /query            - Ejecutar consulta SQL");
-  console.log("   GET  /health           - Verificar estado");
-  console.log("\n💡 Prueba la conexión: http://localhost:5000/test-connection\n");
+const PORT = process.env.MCP_SQL_PORT || 3002;
+app.listen(PORT, () => {
+  console.log(`[mcp-sql] Corriendo en http://localhost:${PORT}`);
+  console.log(`[mcp-sql] Servidores disponibles: ${Object.keys(SQL_SERVERS).join(', ')}`);
 });

@@ -1,127 +1,130 @@
-import { useState, useRef, useEffect } from 'react';
-// COMENTADO: import { useMsal } from '@azure/msal-react';
+import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import ChatHeader from '../components/ChatHeader';
 import MessageList from '../components/MessageList';
 import MessageInput from '../components/MessageInput';
-// COMENTADO: import { tokenRequest } from '../authConfig';
 
-// URL del backend (cambia según tu entorno)
-const BACKEND_URL = import.meta.env.VITE_BACKEND_URL || 'http://localhost:3000';
+const GATEWAY_URL = import.meta.env.VITE_GATEWAY_URL || 'http://localhost:3000';
+const HISTORY_TURNS = Number(import.meta.env.VITE_HISTORY_TURNS) || 3;
+const MAX_MESSAGE_CHARS = Number(import.meta.env.VITE_MAX_MESSAGE_CHARS) || 800;
+
+const WELCOME_MESSAGE = {
+  id: 1,
+  role: 'assistant',
+  content: '¡Hola! Soy tu asistente de infraestructura de Novasoft.\n\nPuedo ayudarte con:\n 📊 Consultas y gráficas de datos de SQL\n 🖥️ Estado de servidores y máquinas virtuales\n\n¿Qué necesitas hoy?'
+};
+
+function loadHistoryFromStorage() {
+  try {
+    const saved = localStorage.getItem('chat_history');
+    if (saved) {
+      const parsed = JSON.parse(saved);
+      if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+    }
+  } catch (err) {
+    console.warn('⚠️ No se pudo cargar historial desde localStorage:', err);
+  }
+  return [WELCOME_MESSAGE];
+}
+// Extraer los últimos N turnos (user+assistant). Devuelve un array de mensajes en orden cronológico.
+function sliceLastNTurns(messagesArr, turns) {
+  const rev = [...messagesArr].reverse();
+  const groups = [];
+  let i = 0;
+  while (i < rev.length && groups.length < turns) {
+    if (rev[i].role === 'assistant') {
+      const assistant = rev[i];
+      const user = rev[i + 1];
+      if (user && user.role === 'user') {
+        groups.push([user, assistant]);
+        i += 2;
+      } else {
+        groups.push([assistant]);
+        i += 1;
+      }
+    } else if (rev[i].role === 'user') {
+      groups.push([rev[i]]);
+      i += 1;
+    } else {
+      groups.push([rev[i]]);
+      i += 1;
+    }
+  }
+  return groups.flat().reverse();
+}
 
 const ChatInterface = () => {
-  // Estado inicial desde localStorage o mensaje de bienvenida
-  const [messages, setMessages] = useState(() => {
-    try {
-      const saved = localStorage.getItem('chat_history');
-      if (saved) {
-        const parsed = JSON.parse(saved);
-        if (Array.isArray(parsed) && parsed.length > 0) {
-          return parsed;
-        }
-      }
-    } catch (err) {
-      console.warn('⚠️ No se pudo cargar historial desde localStorage:', err);
-    }
-    // Mensaje de bienvenida por defecto
-    return [
-      {
-        id: 1,
-        role: 'assistant',
-        content: '¡Hola! Soy tu asistente de infraestructura de Novasoft.\n\nPuedo ayudarte con:\n 📊 Consultas y gráficas de datos de SQL\n 🖥️ Estado de servidores y máquinas virtuales\n\n¿Qué necesitas hoy?'
-      }
-    ];
-  });
+  const [messages, setMessages] = useState(loadHistoryFromStorage);
   const [isLoading, setIsLoading] = useState(false);
   const [inputValue, setInputValue] = useState('');
 
-  // CARGAR historial desde localStorage al montar el componente
+  // Guardar historial en localStorage cuando cambian los mensajes
   useEffect(() => {
     try {
-      const saved = localStorage.getItem('chat_history');
-      if (saved) {
-        const parsed = JSON.parse(saved);
-        if (Array.isArray(parsed) && parsed.length > 1) { // Más de solo el mensaje de bienvenida
-          setMessages(parsed);
-        }
-      }
+      const toSave = sliceLastNTurns(messages, HISTORY_TURNS);
+      // Si no hay nada, guardar el mensaje de bienvenida
+      const finalSave = (Array.isArray(toSave) && toSave.length > 0) ? toSave : [WELCOME_MESSAGE];
+      localStorage.setItem('chat_history', JSON.stringify(finalSave));
     } catch (err) {
-      console.warn('⚠️ Error cargando historial:', err);
-    }
-  }, []);
-
-  // GUARDAR historial en localStorage cuando cambian los mensajes
-  useEffect(() => {
-    try {
-      const toSave = messages.slice(-20); // Guardar solo últimos 20 mensajes
-      localStorage.setItem('chat_history', JSON.stringify(toSave));
-      console.log(`💾 Historial guardado (${toSave.length} mensajes)`);
-    } catch (err) {
-      console.warn('⚠️ Error guardando historial:', err);
+      console.warn('¿Error guardando historial:', err);
     }
   }, [messages]);
-
-  // COMENTADO: // Verificar si el usuario está autenticado
-  // COMENTADO: useEffect(() => {
-  // COMENTADO:   if (!accounts || accounts.length === 0) {
-  // COMENTADO:     navigate('/');
-  // COMENTADO:   }
-  // COMENTADO: }, [accounts, navigate]);
-
-  // COMENTADO: // Obtener el token para las peticiones
-  // COMENTADO: const getToken = async () => {
-  // COMENTADO:   if (!accounts || accounts.length === 0) return null;
-  // COMENTADO: 
-  // COMENTADO:   try {
-  // COMENTADO:     const response = await instance.acquireTokenSilent({
-  // COMENTADO:       ...tokenRequest,
-  // COMENTADO:       account: accounts[0]
-  // COMENTADO:     });
-  // COMENTADO:     return response.accessToken;
-  // COMENTADO:   } catch (error) {
-  // COMENTADO:     console.error('Error obteniendo token:', error);
-  // COMENTADO:     // Si falla silencioso, intentamos con popup
-  // COMENTADO:     const response = await instance.acquireTokenPopup({
-  // COMENTADO:       ...tokenRequest,
-  // COMENTADO:       account: accounts[0]
-  // COMENTADO:     });
-  // COMENTADO:     return response.accessToken;
-  // COMENTADO:   }
-  // COMENTADO: };
 
   const handleSend = async () => {
     if (!inputValue.trim() || isLoading) return;
 
-    // Agregar mensaje del usuario
     const userMessage = {
       id: Date.now(),
       role: 'user',
       content: inputValue
     };
+
     setMessages(prev => [...prev, userMessage]);
     const userQuestion = inputValue;
     setInputValue('');
     setIsLoading(true);
 
     try {
-      // COMENTADO: // Obtener token de autenticación
-      // COMENTADO: const token = await getToken();
-      // COMENTADO: 
-      // COMENTADO: if (!token) {
-      // COMENTADO:   throw new Error('No se pudo obtener token de autenticación');
-      // COMENTADO: }
+      // Historial reducido (últimos N turnos) para ahorrar tokens
+      function sliceLastNTurns(messagesArr, turns) {
+        const rev = [...messagesArr].reverse();
+        const groups = [];
+        let i = 0;
+        while (i < rev.length && groups.length < turns) {
+          if (rev[i].role === 'assistant') {
+            const assistant = rev[i];
+            const user = rev[i + 1];
+            if (user && user.role === 'user') {
+              groups.push([user, assistant]);
+              i += 2;
+            } else {
+              groups.push([assistant]);
+              i += 1;
+            }
+          } else if (rev[i].role === 'user') {
+            groups.push([rev[i]]);
+            i += 1;
+          } else {
+            groups.push([rev[i]]);
+            i += 1;
+          }
+        }
+        return groups.flat().reverse();
+      }
 
-      // Construir historial (últimos 20 mensajes incluyendo el actual)
-      const history = [...messages, userMessage]
-        .slice(-20)
-        .map(({ role, content }) => ({ role, content }));
+      const history = sliceLastNTurns([...messages, userMessage], HISTORY_TURNS)
+        .map(({ role, content }) => ({
+          role,
+          content: typeof content === 'string' && content.length > MAX_MESSAGE_CHARS
+            ? content.slice(0, MAX_MESSAGE_CHARS) + '...TRUNCATED...'
+            : content,
+        }));
 
-      // Llamar al backend
-      const response = await fetch(`${BACKEND_URL}/chat`, {
+
+      const response = await fetch(`${GATEWAY_URL}/chat`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json'
-          // 'Authorization': `Bearer ${token}`
         },
         body: JSON.stringify({
           message: userQuestion,
@@ -135,39 +138,29 @@ const ChatInterface = () => {
       }
 
       const data = await response.json();
-
-      // Construir mensaje del asistente
       let assistantContent = '';
       let chartData = null;
 
       if (data.type === 'success') {
-        // PRIORIDAD 1: Si hay campo 'response' (viene del gateway)
         if (data.response) {
           assistantContent = data.response;
-        }
-        // PRIORIDAD 2: Si hay campo 'message'
-        else if (data.message) {
+        } else if (data.message) {
           assistantContent = data.message;
-        }
-        // Si son resultados de SQL con datos
-        else if (data.data && Array.isArray(data.data) && data.data.length > 0) {
-          assistantContent = `📊 **Resultado de la consulta:**\n\n`;
-          assistantContent += `Se encontraron ${data.data.length} registros.\n\n`;
+        } else if (data.data && Array.isArray(data.data) && data.data.length > 0) {
+          assistantContent = `📊 **Resultado de la consulta:**\n\nSe encontraron ${data.data.length} registros.\n\n`;
 
-          // Mostrar primeros 5 resultados como tabla
           const headers = Object.keys(data.data[0]);
           assistantContent += `| ${headers.join(' | ')} |\n`;
           assistantContent += `|${headers.map(() => '---').join('|')}|\n`;
 
           data.data.slice(0, 5).forEach(row => {
-            assistantContent += `| ${headers.map(h => String(row[h] || '-').slice(0, 30)).join(' | ')} |\n`;
+            assistantContent += `| ${headers.map(h => String(row[h] ?? '-').slice(0, 30)).join(' | ')} |\n`;
           });
 
-          if (data.data.length > 20) {
-            assistantContent += `\n*... y ${data.data.length - 20} registros más.*\n`;
+          if (data.data.length > 5) {
+            assistantContent += `\n*... y ${data.data.length - 5} registros más.*\n`;
           }
 
-          // Si el usuario pidió gráfica o hay sugerencia
           if (data.wantsChart || data.chartSuggestion?.possible) {
             chartData = {
               title: 'Resultados de la consulta',
@@ -176,35 +169,36 @@ const ChatInterface = () => {
             };
           }
         } else {
-          assistantContent = "✅ Consulta ejecutada correctamente.";
+          assistantContent = '✅ Consulta ejecutada correctamente.';
         }
+
       } else if (data.type === 'ambiguity') {
-        assistantContent = `🔍 **Hay múltiples opciones posibles:**\n\n`;
+        assistantContent = '🔍 **Hay múltiples opciones posibles:**\n\n';
         data.options?.forEach((opt, idx) => {
-          assistantContent += `${idx + 1}. Servidor: ${opt.server}, Base de datos: ${opt.database}\n`;
+          assistantContent += `${idx + 1}. Servidor: **${opt.server}**, Base de datos: **${opt.database}**\n`;
         });
-        assistantContent += `\nPor favor sé más específico sobre qué datos quieres consultar.`;
+        assistantContent += '\nPor favor sé más específico.';
+
       } else if (data.type === 'error') {
         assistantContent = `❌ **Error:** ${data.message || 'No se pudo procesar la consulta'}`;
-      }
-      else {
+
+      } else {
         assistantContent = `❌ **Error inesperado:** ${JSON.stringify(data)}`;
       }
 
-
-
-      const assistantMessage = {
+      setMessages(prev => [...prev, {
         id: Date.now() + 1,
         role: 'assistant',
         content: assistantContent,
-        chartData: chartData,
+        chartData,
         metadata: {
           source: data.source,
-          duration_ms: Date.now() - userMessage.id
+          duration_ms: Date.now() - userMessage.id,
+          // BUG 4 PREP: cuando tengamos auth, mostrar qué servidor/bd se consultó
+          server: data.metadata?.server,
+          database: data.metadata?.database
         }
-      };
-
-      setMessages(prev => [...prev, assistantMessage]);
+      }]);
 
     } catch (error) {
       console.error('Error en el chat:', error);
@@ -218,16 +212,7 @@ const ChatInterface = () => {
     }
   };
 
-  // COMENTADO: // Si no hay sesión, no mostrar nada (redirige el useEffect)
-  // COMENTADO: if (!accounts || accounts.length === 0) {
-  // COMENTADO:   return null;
-  // COMENTADO: }
-
-  // COMENTADO: // Obtener nombre del usuario autenticado
-  // COMENTADO: const userName = accounts[0]?.name || 'Usuario';
-  // COMENTADO: const userEmail = accounts[0]?.username || '';
-
-  // Usuario mock para pruebas sin autenticación
+  // Usuario mock — en producción viene del token de MSAL / JWT
   const userName = 'Usuario Prueba';
   const userEmail = 'prueba@novasoft.com';
 
@@ -237,15 +222,11 @@ const ChatInterface = () => {
         userName={userName}
         userEmail={userEmail}
         onLogout={() => {
-          // COMENTADO: instance.logoutPopup().catch(console.error);
           console.log('Logout - Modo prueba sin autenticación');
-          navigate('/');
+          localStorage.removeItem('chat_history');
         }}
       />
-      <MessageList
-        messages={messages}
-        isLoading={isLoading}
-      />
+      <MessageList messages={messages} isLoading={isLoading} />
       <MessageInput
         value={inputValue}
         onChange={setInputValue}
@@ -255,6 +236,5 @@ const ChatInterface = () => {
     </div>
   );
 };
-
 
 export default ChatInterface;

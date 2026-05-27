@@ -1,223 +1,213 @@
-import express from "express";
-import fetch from "node-fetch";
-import jwt from "jsonwebtoken";
-import jwksClient from "jwks-rsa";
-import cors from "cors";
-import dotenv from "dotenv";
+// Servicio de autenticación - Novasoft
+//
+// ESTADO ACTUAL: Modo stub — devuelve tokens mock para desarrollo local.
+// Para activar autenticación real, descomenta los bloques
+// [AUTH-SSO] (colaboradores) y [AUTH-AD] (clientes).
+//
+// REQUISITOS PARA PRODUCCIÓN:
+//   [AUTH-SSO] App Registration en Azure Entra ID + tenant ID
+//   [AUTH-AD]  IP del AD del cliente + acceso LDAPS (puerto 636)
+
+import express from 'express';
+import cors from 'cors';
+import dotenv from 'dotenv';
+import jwt from 'jsonwebtoken';
+// [AUTH-AD]  import ldap from 'ldapjs';
+// [AUTH-SSO] import { ConfidentialClientApplication } from '@azure/msal-node';
+
 dotenv.config();
 
 const app = express();
-
-app.use(cors({
-  origin: "*",
-  methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-  allowedHeaders: ["Content-Type", "Authorization"],
-  credentials: true
-}));
-
-// Responder preflight OPTIONS explícitamente
-app.options("*", cors());
-
+app.use(cors({ origin: process.env.FRONTEND_URL || 'http://localhost:5173' }));
 app.use(express.json());
 
+const JWT_SECRET = process.env.JWT_SECRET || 'secreto-fuerte';
+const AZURE_TENANT = process.env.AZURE_TENANT_ID;
+const AZURE_CLIENT_ID = process.env.AZURE_CLIENT_ID;
 
-// ============================================
-// CONFIGURACIÓN ENTRADA ID - UNA SOLA APP
-// ============================================
-const TENANT_ID = process.env.TENANT_ID;
-const CLIENT_ID = process.env.CLIENT_ID;  // El mismo para frontend y backend
-const AUTHORITY = `https://login.microsoftonline.com/${TENANT_ID}/v2.0`;
+import jwksRsa from 'jwks-rsa';
 
-// El audience puede ser el Client ID o api://{CLIENT_ID}
-const allowedAudiences = [
-  CLIENT_ID,
-  `api://${CLIENT_ID}`
-];
-
-if (!TENANT_ID || !CLIENT_ID) {
-  console.warn("⚠️ TENANT_ID o CLIENT_ID no están definidos en backend/.env");
+if (!AZURE_TENANT || !AZURE_CLIENT_ID) {
+  console.warn('[backend] AZURE_TENANT_ID or AZURE_CLIENT_ID not set — MS token validation may fail');
 }
 
-// Cliente para obtener la clave pública de Microsoft
-const client = jwksClient({
-  jwksUri: `${AUTHORITY}/discovery/v2.0/keys`
+// JWKS client using jwks-rsa
+const jwksClient = jwksRsa({
+  jwksUri: `https://login.microsoftonline.com/${AZURE_TENANT}/discovery/v2.0/keys`,
 });
 
 function getKey(header, callback) {
-  client.getSigningKey(header.kid, (err, key) => {
-    if (err) {
-      callback(err);
-    } else {
-      callback(null, key.getPublicKey());
-    }
+  if (!header || !header.kid) return callback(new Error('Token header missing kid'));
+  jwksClient.getSigningKey(header.kid, (err, key) => {
+    if (err) return callback(err);
+    const pubkey = key.getPublicKey ? key.getPublicKey() : key.rsaPublicKey;
+    callback(null, pubkey);
   });
 }
 
-// ============================================
-// MIDDLEWARE DE AUTENTICACIÓN
-// ============================================
-async function authenticateToken(req, res, next) {
-  // COMENTADO: const authHeader = req.headers.authorization;
-  // COMENTADO: const token = authHeader && authHeader.split(' ')[1];
+function verifyMicrosoftAccessToken(token) {
+  return new Promise((resolve, reject) => {
+    const options = {
+      audience: [
+        AZURE_CLIENT_ID,                          // access token para tu API
+        `api://${AZURE_CLIENT_ID}`               // formato alternativo común
+      ],
+      issuer: [
+        `https://login.microsoftonline.com/${AZURE_TENANT}/v2.0`,
+        `https://sts.windows.net/${AZURE_TENANT}/`   // issuer v1 como fallback
+      ],
+      algorithms: ['RS256']
+    };
 
-  // COMENTADO: if (!token) {
-  // COMENTADO:   return res.status(401).json({ 
-  // COMENTADO:     type: "error", 
-  // COMENTADO:     message: "Token no proporcionado" 
-  // COMENTADO:   });
-  // COMENTADO: }
-
-  // COMENTADO: const validationOptions = {
-  // COMENTADO:   audience: allowedAudiences,
-  // COMENTADO:   issuer: `${AUTHORITY}`,
-  // COMENTADO:   algorithms: ["RS256"]
-  // COMENTADO: };
-
-  // COMENTADO: jwt.verify(token, getKey, validationOptions, (err, decoded) => {
-  // COMENTADO:   if (err) {
-  // COMENTADO:     console.error("Error validando token:", err);
-  // COMENTADO:     return res.status(403).json({ 
-  // COMENTADO:       type: "error", 
-  // COMENTADO:       message: "Token inválido o expirado",
-  // COMENTADO:       details: err.message
-  // COMENTADO:     });
-  // COMENTADO:   }
-
-  // COMENTADO:   // Verificar tenant
-  // COMENTADO:   const allowedTenants = process.env.ALLOWED_TENANTS
-  // COMENTADO:     ? process.env.ALLOWED_TENANTS.split(',').map(t => t.trim()).filter(Boolean)
-  // COMENTADO:     : [TENANT_ID];
-
-  // COMENTADO:   if (!allowedTenants.includes(decoded.tid)) {
-  // COMENTADO:     return res.status(403).json({
-  // COMENTADO:       type: "error",
-  // COMENTADO:       message: "Acceso denegado. Solo usuarios de la empresa autorizada."
-  // COMENTADO:     });
-  // COMENTADO:   }
-
-  // COMENTADO:   // Guardar información del usuario
-  // COMENTADO:   req.user = {
-  // COMENTADO:     email: decoded.email || decoded.upn || decoded.unique_name,
-  // COMENTADO:     name: decoded.name,
-  // COMENTADO:     tenantId: decoded.tid,
-  // COMENTADO:     userId: decoded.oid
-  // COMENTADO:   };
-
-  // COMENTADO:   next();
-  // COMENTADO: });
-
-  // Usuario mock para pruebas sin autenticación
-  req.user = {
-    email: "prueba@novasoft.com",
-    name: "Usuario Prueba",
-    tenantId: TENANT_ID,
-    userId: "mock-user-id"
-  };
-
-  next();
+    jwt.verify(token, getKey, options, (err, decoded) => {
+      if (err) return reject(err);
+      resolve(decoded);
+    });
+  });
 }
 
-// ============================================
-// RUTAS
-// ============================================
-//verificar que backend esté corriendo
-app.get("/health", (_req, res) => {
-  res.status(200).json({ ok: true, service: "backend" });
-});
+// ─────────────────────────────────────────
+// [AUTH-SSO] CONFIGURACIÓN MSAL (Empleados)
+// Descomentar cuando tengas la App Registration
+// ─────────────────────────────────────────
+/*
+const msalConfig = {
+  auth: {
+    clientId: process.env.AZURE_CLIENT_ID,         // App Registration Client ID
+    authority: `https://login.microsoftonline.com/${process.env.AZURE_TENANT_ID}`,
+    clientSecret: process.env.AZURE_CLIENT_SECRET,
+  },
+};
+const msalClient = new ConfidentialClientApplication(msalConfig);
+*/
 
-
-
-app.post("/chat", authenticateToken, async (req, res) => {
-  const { message, context = {} } = req.body;
-
-  const enrichedContext = {
-    ...context,
-    user: req.user,
-  };
-
-  if (!message || typeof message !== "string") {
-    return res.status(400).json({
-      type: "error",
-      message: "El campo 'message' es obligatorio"
+// ─────────────────────────────────────────
+// [AUTH-AD] HELPER LDAP (Clientes)
+// Descomentar cuando tengas IP del AD del cliente
+// ─────────────────────────────────────────
+/*
+function authenticateWithAD(username, password, adServer) {
+  return new Promise((resolve, reject) => {
+    const client = ldap.createClient({
+      url: `ldaps://${adServer}:636`,
+      tlsOptions: { rejectUnauthorized: false }, // true en producción con cert válido
     });
-  }
+
+    const dn = username.includes('\\')
+      ? username                          // dominio\\usuario
+      : `${username}@${adServer}`;        // usuario@dominio.com
+
+    client.bind(dn, password, (err) => {
+      client.destroy();
+      if (err) reject(new Error('Credenciales inválidas'));
+      else resolve(true);
+    });
+  });
+}
+*/
+
+// ─────────────────────────────────────────
+// AUTH EMPLEADOS (SSO Microsoft)
+// POST /auth/employee
+// En producción: valida el access token de MSAL que llega del frontend
+// ─────────────────────────────────────────
+app.post('/auth/employee', async (req, res) => {
+  const { accessToken } = req.body;
+
+  if (!accessToken) return res.status(400).json({ message: 'accessToken requerido en el body' });
 
   try {
-    const gatewayUrl = process.env.GATEWAY_URL || "http://localhost:4000";
-    const response = await fetch(`${gatewayUrl}/execute`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ message, context: enrichedContext })
-    });
+    const claims = await verifyMicrosoftAccessToken(accessToken);
 
-    const data = await response.json();
+    // Construir usuario a partir de claims
+    const user = {
+      id: claims.oid || claims.sub || `emp-${Date.now()}`,
+      name: claims.name || claims.preferred_username || claims.upn || 'Empleado MS',
+      email: claims.preferred_username || claims.upn || '',
+      type: 'employee',
+    };
 
-    if (!response.ok) {
-      return res.status(response.status).json({
-        type: "error",
-        message: data?.message || "Error al comunicarse con el gateway",
-        details: data
-      });
-    }
+    // Firmar JWT interno para sesión en nuestra API
+    const token = jwt.sign(user, JWT_SECRET, { expiresIn: process.env.JWT_EXPIRES_IN || '8h' });
+    res.json({ token, user });
 
-    return res.json({
-      type: "success",
-      message: data.response || data.message || "Respuesta procesada",
-      ...data
-    });
-  } catch (error) {
-    console.error("Error en backend /chat:", error);
-    return res.status(500).json({
-      type: "error",
-      message: "No fue posible comunicarse con el gateway"
-    });
+  } catch (err) {
+    console.error('[backend] Error validando accessToken MS:', err.message || err);
+    return res.status(401).json({ message: 'Access token inválido' });
   }
 });
 
-// ============================================
-// AUTENTICACIÓN PARA CLIENTES (usuario/contraseña)
-// ============================================
-app.post("/auth/client", async (req, res) => {
+// ─────────────────────────────────────────
+// AUTH CLIENTES (usuario/contraseña de dominio)
+// POST /auth/client
+// En producción: valida contra el AD del cliente vía LDAPS:636
+// ─────────────────────────────────────────
+app.post('/auth/client', async (req, res) => {
   const { username, password } = req.body;
 
   if (!username || !password) {
-    return res.status(400).json({ message: "Usuario y contraseña requeridos" });
+    return res.status(400).json({ message: 'Usuario y contraseña requeridos' });
   }
 
   try {
-    //aquí iría la lógica real de validación contra el directorio activo
-    const isValid = await validateClientCredentials(username, password);
+    // [AUTH-AD] const adServer = resolveClientAD(username); // mapear dominio → IP del AD
+    // [AUTH-AD] await authenticateWithAD(username, password, adServer);
 
-    if (!isValid) {
-      return res.status(401).json({ message: "Credenciales inválidas" });
+    // ── MODO STUB ────────────────────────────
+    // En producción eliminar este bloque y descomentar [AUTH-AD]
+    if (password.length < 4) {
+      return res.status(401).json({ message: 'Credenciales inválidas (stub: password muy corta)' });
     }
 
-    //generar token JWT para el cliente
-    const token = jwt.sign(
-      {
-        sub: username,
-        userType: 'client',
-        name: username.split('\\').pop() || username
-      },
-      process.env.JWT_SECRET || 'el-secreto-temporal',
-      { expiresIn: '8h' }
-    );
+    const stubUser = {
+      id: `client-${Date.now()}`,
+      name: username,
+      email: `${username.replace(/\\/g, '.')}@cliente.com`,
+      type: 'client',
+      domain: username.includes('\\') ? username.split('\\')[0] : 'unknown',
+      // permissions: [...], // vendrán del AD del cliente
+    };
 
-    res.json({ token, userType: 'client' });
-  } catch (error) {
-    console.error("Error en autenticación de cliente:", error);
-    res.status(500).json({ message: "Error interno del servidor" });
+    const token = jwt.sign(stubUser, JWT_SECRET, { expiresIn: '4h' });
+    res.json({ token, user: stubUser });
+
+  } catch (err) {
+    console.error('[backend] Error en auth/client:', err.message);
+    res.status(401).json({ message: err.message || 'Autenticación fallida' });
   }
 });
 
-//funcion para validar credenciales de cliente (en producción, esto debería consultar el directorio activo)
-async function validateClientCredentials(username, password) {
-  //Aquí va la lógica real de validación contra el directorio activo
-  console.log(`Validando cliente: ${username}`);
-  return true;
+// ─────────────────────────────────────────
+// MIDDLEWARE: Verificar JWT
+// Para usar en rutas protegidas del backend
+// ─────────────────────────────────────────
+export function verifyToken(req, res, next) {
+  const authHeader = req.headers.authorization;
+  if (!authHeader?.startsWith('Bearer ')) {
+    return res.status(401).json({ message: 'Token requerido' });
+  }
+  try {
+    const token = authHeader.split(' ')[1];
+    req.user = jwt.verify(token, JWT_SECRET);
+    next();
+  } catch (_) {
+    res.status(401).json({ message: 'Token inválido o expirado' });
+  }
 }
 
-app.listen(3000, () => {
-  console.log("Backend corriendo en puerto 3000");
-  console.log(`🔓 MODO PRUEBA - Autenticación desactivada`);
+// ─────────────────────────────────────────
+// HEALTH CHECK
+// ─────────────────────────────────────────
+app.get('/health', (req, res) => {
+  res.json({
+    status: 'ok',
+    service: 'backend',
+    authMode: 'stub', // cambiar a 'sso+ad' cuando esté en producción
+  });
+});
+
+const PORT = process.env.BACKEND_PORT || 3001;
+app.listen(PORT, () => {
+  console.log(`[backend] Corriendo en http://localhost:${PORT}`);
+  console.log(`[backend] Modo: STUB — sin validación real de AD`);
 });

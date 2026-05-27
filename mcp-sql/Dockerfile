@@ -1,4 +1,4 @@
-FROM node:20.13.0-alpine3.19
+FROM node:25.8.2
 
 WORKDIR /app
 
@@ -14,8 +14,8 @@ RUN npm ci --only=production
 # Copy application
 COPY . .
 
-EXPOSE 5000
+EXPOSE 3002
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
-  CMD node -e "require('http').get('http://localhost:5000/health', (r) => {if (r.statusCode !== 200) throw new Error(r.statusCode)})"
+  CMD node -e "require('http').get('http://localhost:3002/health', (r) => {if (r.statusCode !== 200) throw new Error(r.statusCode)})"
 
 CMD ["node", "src/index.js"]

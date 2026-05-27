@@ -1,639 +1,378 @@
-import express from "express";
-import fetch from "node-fetch";
-import dotenv from "dotenv";
+// gateway/index.js
+// Orquestador IA — recibe mensajes del frontend, razona con Azure OpenAI
+// y delega acciones al microservicio mcp-sql (y futuros mcp-*)
+
+import express from 'express';
+import cors from 'cors';
+import dotenv from 'dotenv';
+import { AzureOpenAI } from 'openai';
+
 dotenv.config();
 
-const AZURE_OPENAI_ENDPOINT = process.env.AZURE_OPENAI_ENDPOINT;
-const AZURE_OPENAI_API_KEY = process.env.AZURE_OPENAI_API_KEY;
-const AZURE_OPENAI_DEPLOYMENT = process.env.AZURE_OPENAI_DEPLOYMENT || "gpt-4.1-mini";
-const AZURE_OPENAI_API_VERSION = process.env.AZURE_OPENAI_API_VERSION || "2024-12-01-preview";
-const MCP_SQL_URL = process.env.MCP_SQL_URL || "http://localhost:5000";
-const CONTEXT_RESOLVER_URL = process.env.CONTEXT_RESOLVER_URL || "http://localhost:6000";
-
-const SCHEMA_REFRESH_MS = 10 * 60 * 1000;
-
-// Configuración por defecto para SQL (único servidor)
-const  DEFAULT_SQL_CONFIG = {
-  server: "sql-01",
-  database: process.env.DEFAULT_SQL_DATABASE || "prueba_mcp",
-  defaultTable: "clientes"
-};
-
 const app = express();
+app.use(cors({ origin: process.env.FRONTEND_URL || 'http://localhost:5173' }));
 app.use(express.json());
 
-const schemaCache = new Map();
-const relationsCache = new Map();
-
-function getCacheKey(server, database) {
-  return `${server}::${database}`;
-}
-
-function isAzureOpenAIConfigured() {
-  return Boolean(AZURE_OPENAI_ENDPOINT && AZURE_OPENAI_API_KEY && AZURE_OPENAI_DEPLOYMENT);
-}
-
-async function callAzureOpenAIChatCompletion(messages, temperature = 0.2) {
-  if (!isAzureOpenAIConfigured()) {
-    throw new Error("Azure OpenAI no está configurado. Define AZURE_OPENAI_ENDPOINT, AZURE_OPENAI_API_KEY y AZURE_OPENAI_DEPLOYMENT");
-  }
-
-  const normalizedEndpoint = AZURE_OPENAI_ENDPOINT.replace(/\/$/, "");
-  const url = `${normalizedEndpoint}/openai/deployments/${AZURE_OPENAI_DEPLOYMENT}/chat/completions?api-version=${AZURE_OPENAI_API_VERSION}`;
-
-  const response = await fetch(url, {
-    method: "POST",
-    headers: {
-      "api-key": AZURE_OPENAI_API_KEY,
-      "Content-Type": "application/json"
-    },
-    body: JSON.stringify({
-      messages,
-      temperature
-    })
-  });
-
-  const data = await response.json();
-
-  if (!response.ok) {
-    throw new Error(data?.error?.message || "Error con Azure OpenAI");
-  }
-
-  return data?.choices?.[0]?.message?.content?.trim() || "";
-}
-
-// ============================================
-// FAST-PATH ROUTER: DETECTAR CONSULTAS ADMIN
-// ============================================
-function detectAdminQuery(message) {
-  const adminPatterns = [
-    /listar\s+bases/i,
-    /list\s+databases/i,
-    /mostrar\s+servidores/i,
-    /show\s+servers/i,
-    /que\s+servidores/i,
-    /que\s+bases\s+de\s+datos/i,
-    /cuales\s+son\s+las\s+bases/i,
-    /databases/i,
-    /servidores\s+disponibles/i,
-    /bases\s+disponibles/i,
-    /listar\s+tablas/i,
-    /list\s+tables/i,
-    /mostrar\s+tablas/i
-  ];
-
-  return adminPatterns.some(pattern => pattern.test(message));
-}
-
-async function handleAdminQuery(message, context = {}) {
-  console.log("⚡ [GATEWAY] Fast-path: Consulta administrativa detectada");
-
-  try {
-    // Extraer servidor si viene especificado
-    const serverMatch = message.match(/sql-(\d+)|servidor\s+(\w+)/i);
-    const server = serverMatch 
-      ? `sql-${serverMatch[1] || serverMatch[2]}`
-      : null;
-
-    if (!server) {
-      // Retornar todos los servidores/bases disponibles
-      const dbResponse = await fetch(`${MCP_SQL_URL}/databases/all`, {
-        headers: { "Content-Type": "application/json" }
-      });
-
-      if (!dbResponse.ok) {
-        throw new Error("No se pudieron obtener las bases de datos");
-      }
-
-      const dbData = await dbResponse.json();
-      let response = "📊 **Servidores y bases de datos disponibles:**\n\n";
-
-      if (dbData.servers && Object.keys(dbData.servers).length > 0) {
-        for (const [srv, dbs] of Object.entries(dbData.servers)) {
-          response += `**${srv}**: ${dbs.join(", ")}\n\n`;
-        }
-      } else {
-        response = dbData.message || "No hay bases de datos disponibles.";
-      }
-
-      return {
-        type: "success",
-        response: response,
-        source: "admin"
-      };
-    } else {
-      // Retornar bases de datos del servidor específico
-      const dbResponse = await fetch(
-        `${MCP_SQL_URL}/databases?server=${encodeURIComponent(server)}`,
-        { headers: { "Content-Type": "application/json" } }
-      );
-
-      if (!dbResponse.ok) {
-        throw new Error(`No se pudo obtener bases de datos para ${server}`);
-      }
-
-      const dbData = await dbResponse.json();
-      let response = `📊 **Bases de datos en ${server}:**\n\n`;
-
-      if (Array.isArray(dbData.databases)) {
-        response += dbData.databases.map(db => `- ${db}`).join("\n");
-      } else {
-        response = dbData.message || "No hay bases de datos en este servidor.";
-      }
-
-      return {
-        type: "success",
-        response: response,
-        source: "admin"
-      };
-    }
-
-  } catch (error) {
-    console.error("❌ [GATEWAY] Error en fast-path admin:", error);
-    return {
-      type: "error",
-      message: `Error al obtener información: ${error.message}`,
-      source: "admin"
-    };
-  }
-}
-
-async function fetchSchema(server, database) {
-  const url = `${MCP_SQL_URL}/schema?server=${encodeURIComponent(server)}&database=${encodeURIComponent(database)}`;
-  const response = await fetch(url);
-  const data = await response.json();
-
-  if (!response.ok || !data?.success) {
-    throw new Error(data?.message || "No se pudo obtener el esquema");
-  }
-
-  return data.schema || {};
-}
-
-async function fetchRelations(server, database) {
-  const url = `${MCP_SQL_URL}/relations?server=${encodeURIComponent(server)}&database=${encodeURIComponent(database)}`;
-  const response = await fetch(url);
-  const data = await response.json();
-
-  if (!response.ok || !data?.success) {
-    return {};
-  }
-
-  return data.relations || {};
-}
-
-// ============================================
-// FORMATO DE ESQUEMA CON DETECCIÓN DE RELACIONES
-// ============================================
-async function getSchemaWithRelations(server, database) {
-  // Obtener esquema
-  const schema = await getSchemaForDatabase(server, database);
-
-  // Obtener relaciones (FK) desde caché o fetch
-  const cacheKey = getCacheKey(server, database);
-  let relations = relationsCache.get(cacheKey);
-  if (!relations) {
-    relations = await fetchRelations(server, database);
-    relationsCache.set(cacheKey, relations);
-  }
-
-  // Formatear esquema incluyendo relaciones
-  let schemaText = "";
-  for (const [table, columns] of Object.entries(schema)) {
-    const cols = columns.map(col => {
-      // Verificar si esta columna es FK
-      const isFk = relations[table]?.some(r => r.column === col.name);
-      if (isFk) {
-        const relation = relations[table].find(r => r.column === col.name);
-        return `${col.name} (${col.type}) 🔗 FK → ${relation.references}.${relation.referencesColumn}`;
-      }
-      // Marcar columnas que podrían ser FK por nombre (Id al final)
-      const isPotentialFk = col.name.endsWith('Id') || col.name.endsWith('ID');
-      if (isPotentialFk) {
-        return `${col.name} (${col.type}) 🔗 probable FK`;
-      }
-      return `${col.name} (${col.type})`;
-    }).join(", ");
-    schemaText += `- ${table}: ${cols}\n`;
-  }
-
-  // Agregar sugerencias de JOIN basadas en relaciones reales
-  const relationsList = Object.entries(relations);
-  if (relationsList.length > 0) {
-    schemaText += "\n🔗 RELACIONES DETECTADAS (FK):\n";
-    for (const [table, fks] of relationsList) {
-      for (const fk of fks) {
-        schemaText += `  - ${table}.${fk.column} → ${fk.references}.${fk.referencesColumn}\n`;
-      }
-    }
-  }
-
-  return schemaText;
-}
-
-async function getSchemaForDatabase(server, database) {
-  const cacheKey = getCacheKey(server, database);
-  const cached = schemaCache.get(cacheKey);
-  if (cached) {
-    return cached;
-  }
-
-  const schema = await fetchSchema(server, database);
-  schemaCache.set(cacheKey, schema);
-  return schema;
-}
-
-async function refreshSchemaForDatabase(server, database) {
-  try {
-    const schema = await fetchSchema(server, database);
-    const relations = await fetchRelations(server, database);
-    const cacheKey = getCacheKey(server, database);
-    schemaCache.set(cacheKey, schema);
-    relationsCache.set(cacheKey, relations);
-    console.log(`🔄 [GATEWAY] Esquema actualizado: ${server}/${database} (${Object.keys(schema).length} tablas, ${Object.keys(relations).length} relaciones)`);
-  } catch (error) {
-    console.warn(`⚠️ [GATEWAY] No se pudo actualizar esquema de ${server}/${database}:`, error.message);
-  }
-}
-
-setInterval(() => {
-  for (const cacheKey of schemaCache.keys()) {
-    const [server, database] = cacheKey.split("::");
-    refreshSchemaForDatabase(server, database);
-  }
-}, SCHEMA_REFRESH_MS);
-
-// ============================================
-// CLASIFICADOR DE INTENCIÓN
-// ============================================
-async function classifyIntent(message) {
-  const prompt = `
-Eres un clasificador. Determina si el usuario quiere CONSULTAR DATOS (SQL) o es una conversación general.
-
-RESPONDE SOLO con "sql" o "chat". Nada más.
-
-- "sql": si el usuario pregunta sobre: clientes, ventas, productos, reportes, bases de datos, tablas, registros, consultas, datos, información de la empresa.
-- "chat": si es un saludo, pregunta sobre ti, conversación general, agradecimiento, despedida, explicaciones, ayuda.
-
-Ejemplos:
-- "Hola" → chat
-- "¿Cómo estás?" → chat
-- "Muéstrame los clientes" → sql
-- "¿Cuántas ventas hay?" → sql
-- "¿Qué puedes hacer?" → chat
-- "Gracias" → chat
-
-Mensaje: "${message}"
-`;
-
-  try {
-    const content = await callAzureOpenAIChatCompletion([
-      { role: "user", content: prompt }
-    ], 0.1);
-
-    const result = content.toLowerCase();
-    return result === "sql";
-  } catch (error) {
-    console.error("Error clasificando intención:", error);
-    return false;
-  }
-}
-
-// ============================================
-// FUNCIÓN PARA CORREGIR SQL AUTOMÁTICAMENTE
-// ============================================
-function fixSQL(sql) {
-  let fixed = sql;
-
-  // Eliminar TOP de consultas de agregación (COUNT, SUM, AVG, MIN, MAX)
-  const aggregateRegex = /SELECT\s+TOP\s+\d+\s+(COUNT|SUM|AVG|MIN|MAX|COUNT\s*\(|SUM\s*\()/i;
-  if (aggregateRegex.test(fixed)) {
-    fixed = fixed.replace(/TOP\s+\d+\s+/i, "");
-    console.log("🔧 [FIX] Eliminado TOP de consulta de agregación");
-  }
-
-  // Eliminar TOP cuando está después de SELECT pero antes de COUNT
-  const topBeforeAggregateRegex = /SELECT\s+TOP\s+\d+\s+(COUNT|SUM|AVG)/i;
-  if (topBeforeAggregateRegex.test(fixed)) {
-    fixed = fixed.replace(/TOP\s+\d+\s+/i, "");
-    console.log("🔧 [FIX] Eliminado TOP antes de función de agregación");
-  }
-
-  // Asegurar que comience con SELECT (si no tiene SELECT al inicio)
-  const trimmed = fixed.trim().toUpperCase();
-  if (!trimmed.startsWith("SELECT") && !trimmed.startsWith("WITH") && !trimmed.startsWith("UNION")) {
-    fixed = "SELECT " + fixed;
-    console.log("🔧 [FIX] Agregado SELECT al inicio");
-  }
-
-  // Eliminar múltiples SELECT anidados (SELECT SELECT)
-  fixed = fixed.replace(/SELECT\s+SELECT/i, "SELECT");
-
-  return fixed;
-}
-
-// ============================================
-// GENERAR SQL - PROMPT CON JOIN AUTOMÁTICOS
-// ============================================
-async function generateSQL(message, database, table, schemaText, historyText) {
-  const prompt = `
-Eres un experto en SQL Server (T-SQL). Tu tarea es generar consultas SQL que sean LEGIBLES PARA USUARIOS NO TÉCNICOS.
-
-CONTEXTO:
-- Base de datos: ${database}
-- Tabla sugerida: ${table}
-
-ESQUEMA REAL (tablas, columnas y relaciones detectadas):
-${schemaText}
-
-CONVERSACIÓN RECIENTE:
-${historyText}
-
-REGLAS ESTRICTAS PARA HACER LA RESPUESTA LEGIBLE:
-1. NUNCA devuelvas columnas que terminen en "Id" o "ID" (ej: ClienteId, ProductoId, PedidoId)
-2. En su lugar, usa JOINs para traer el NOMBRE o DESCRIPCIÓN de la tabla relacionada
-3. Usa las relaciones detectadas (🔗 FK) para saber qué columnas conectar
-4. Siempre intenta reemplazar campos ID por nombres legibles:
-   - ClienteId → traer Cliente.Nombre
-   - ProductoId → traer Producto.Nombre o Producto.Descripcion
-   - PedidoId → no es necesario mostrarlo, mejor muestra Fecha o referencia
-5. Los alias deben ser claros: "Cliente" en lugar de "c", "Producto" en lugar de "p"
-6. Si hay fecha, muéstrala en formato legible
-7. Si no hay un nombre descriptivo, al menos no muestres el ID
-
-EJEMPLO DE LO QUE DEBES GENERAR:
-✅ BUENO:
-SELECT TOP 10 
-    c.Nombre AS Cliente,
-    p.Fecha AS FechaPedido,
-    pr.Nombre AS Producto,
-    d.Cantidad
-FROM [dbo].[Pedidos] p
-INNER JOIN [dbo].[Clientes] c ON p.ClienteId = c.Id
-INNER JOIN [dbo].[DetallePedidos] d ON p.Id = d.PedidoId
-INNER JOIN [dbo].[Productos] pr ON d.ProductoId = pr.Id
-
-❌ MALO (MUESTRA IDs):
-SELECT TOP 10 ClienteId, ProductoId, PedidoId FROM [dbo].[Pedidos]
-
-RESPONDE SOLO CON EL SQL. NADA MÁS.
-
-Pregunta del usuario: ${message}
-`;
-
-  let sql = await callAzureOpenAIChatCompletion([
-    { role: "user", content: prompt }
-  ], 0.2);
-
-  // Limpiar posibles markdown
-  sql = sql.replace(/```sql\n?/gi, "").replace(/```\n?/g, "").trim();
-
-  // Aplicar correcciones automáticas
-  sql = fixSQL(sql);
-
-  // Verificar si la consulta contiene IDs sin JOIN (intentar corregir)
-  const hasIdColumn = /\b\w*[Ii]d\b/.test(sql);
-  const hasJoin = /\bJOIN\b/i.test(sql);
-
-  if (hasIdColumn && !hasJoin && !sql.toUpperCase().includes("COUNT")) {
-    console.log("⚠️ [GATEWAY] Posible consulta con IDs sin JOIN, puede ser poco legible");
-  }
-
-  return sql;
-}
-
-// ============================================
-// DETECTAR INTENCIÓN DE GRÁFICA
-// ============================================
-async function detectChartIntent(message) {
-  const prompt = `
-Eres un clasificador MUY ESTRICTO. Determina si el usuario QUIERE EXPLÍCITAMENTE una gráfica o visualización.
-
-SOLO responde "true" si el usuario MENCIONA EXPLÍCITAMENTE una de estas palabras:
-- "gráfica", "gráfico", "grafica", "grafico"
-- "chart", "graph"
-- "visualiza", "visualización"
-- "dibuja", "plot", "barra", "línea", "pastel", "circular"
-
-Si el usuario solo pregunta por datos, estadísticas, números o listados, responde "false".
-
-Ejemplos:
-- "Muéstrame una gráfica de ventas" → true
-- "Dame el gráfico de barras" → true
-- "¿Cuántos clientes hay?" → false
-- "Lista los productos" → false
-- "Visualiza los datos en una gráfica" → true
-
-Mensaje del usuario: "${message}"
-`;
-
-  const content = await callAzureOpenAIChatCompletion([
-    { role: "user", content: prompt }
-  ], 0.1);
-
-  const result = content.toLowerCase();
-  console.log(`📊 [GATEWAY] detectChartIntent: "${message.substring(0, 50)}..." → ${result}`);
-  return result === "true";
-}
-
-// ============================================
-// CHAT DIRECTO (CONVERSACIÓN GENERAL)
-// ============================================
-async function chatDirect(message, history = []) {
-  const systemPrompt = `
-Eres un asistente de infraestructura de TI llamado Novachat.
-
-Eres amable, profesional y respondes en español.
-`;
-
-  const normalizedHistory = Array.isArray(history)
-    ? history
-      .filter(item => item?.role && item?.content)
-      .map(({ role, content }) => ({ role, content }))
-    : [];
-
-  const messages = [
-    { role: "system", content: systemPrompt.trim() },
-    ...normalizedHistory,
-    { role: "user", content: message }
-  ];
-
-  return callAzureOpenAIChatCompletion(messages, 0.7);
-}
-
-async function resolveContext(message, context) {
-  const response = await fetch(`${CONTEXT_RESOLVER_URL}/resolve`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ message, context })
-  });
-
-  const data = await response.json();
-  if (!response.ok) {
-    throw new Error(data?.message || "No se pudo resolver el contexto");
-  }
-
-  return data;
-}
-
-// ============================================
-// HEALTH CHECK
-// ============================================
-app.get("/health", (_req, res) => {
-  res.status(200).json({ ok: true, service: "gateway" });
+const MAX_MESSAGE_CHARS = Number(process.env.MAX_MESSAGE_CHARS) || 800;
+
+// ─────────────────────────────────────────
+// CLIENTE AZURE OPENAI
+// ─────────────────────────────────────────
+const openai = new AzureOpenAI({
+  endpoint: process.env.AZURE_OPENAI_ENDPOINT,
+  apiKey: process.env.AZURE_OPENAI_API_KEY,
+  apiVersion: process.env.AZURE_OPENAI_API_VERSION,
+  deployment: process.env.AZURE_OPENAI_DEPLOYMENT,
 });
 
-// ============================================
-// ENDPOINT PRINCIPAL: EXECUTE
-// ============================================
-app.post("/execute", async (req, res) => {
-  const { message, context = {} } = req.body;
+// ─────────────────────────────────────────
+// URLS DE MICROSERVICIOS
+// Agregar futuros: MCP_AZURE_MONITOR_URL, MCP_DEVOPS_URL, etc.
+// ─────────────────────────────────────────
+const MCP_SQL_URL = process.env.MCP_SQL_URL || 'http://localhost:3002';
 
-  if (!message || typeof message !== "string") {
-    return res.status(400).json({
-      type: "error",
-      message: "El campo 'message' es obligatorio"
-    });
+// ─────────────────────────────────────────
+// HERRAMIENTAS MCP (Tool Calling para OpenAI)
+// Cada herramienta mapea a un endpoint del microservicio
+// ─────────────────────────────────────────
+const MCP_TOOLS = [
+  {
+    type: 'function',
+    function: {
+      name: 'list_sql_servers',
+      description:
+        'Lista los servidores SQL Server disponibles. Úsala cuando el usuario pregunte qué servidores hay o antes de hacer consultas si no se especifica servidor.',
+      parameters: { type: 'object', properties: {} },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'list_databases',
+      description: 'Lista las bases de datos disponibles en un servidor SQL Server específico.',
+      parameters: {
+        type: 'object',
+        required: ['server'],
+        properties: {
+          server: {
+            type: 'string',
+            description: 'Alias del servidor (ej: "01", "02", "03"). Obtenido de list_sql_servers.',
+          },
+        },
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'list_tables',
+      description: 'Lista las tablas de una base de datos.',
+      parameters: {
+        type: 'object',
+        required: ['server', 'database'],
+        properties: {
+          server: { type: 'string', description: 'Alias del servidor.' },
+          database: { type: 'string', description: 'Nombre de la base de datos.' },
+        },
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'get_table_schema',
+      description: 'Obtiene las columnas y tipos de datos de una tabla. Úsala antes de generar una query para conocer la estructura exacta.',
+      parameters: {
+        type: 'object',
+        required: ['server', 'database', 'table'],
+        properties: {
+          server: { type: 'string' },
+          database: { type: 'string' },
+          table: { type: 'string' },
+        },
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'execute_sql_query',
+      description:
+        'Genera el SQL basándote en el schema de las tablas.',
+      parameters: {
+        type: 'object',
+        required: ['server', 'database', 'query'],
+        properties: {
+          server: { type: 'string', description: 'Alias del servidor.' },
+          database: { type: 'string', description: 'Nombre de la base de datos.' },
+          query: {
+            type: 'string',
+            description: 'Query válida en T-SQL. Sin punto y coma al final.',
+          },
+        },
+      },
+    },
+  },
+
+];
+
+// ─────────────────────────────────────────
+// EJECUTORES DE HERRAMIENTAS
+// Llaman al microservicio correspondiente
+// ─────────────────────────────────────────
+async function executeTool(toolName, args) {
+  try {
+    switch (toolName) {
+      case 'list_sql_servers': {
+        const res = await fetch(`${MCP_SQL_URL}/servers`);
+        return await res.json();
+      }
+      case 'list_databases': {
+        const res = await fetch(`${MCP_SQL_URL}/databases?server=${encodeURIComponent(args.server)}`);
+        return await res.json();
+      }
+      case 'list_tables': {
+        const res = await fetch(
+          `${MCP_SQL_URL}/tables?server=${encodeURIComponent(args.server)}&database=${encodeURIComponent(args.database)}`
+        );
+        return await res.json();
+      }
+      case 'get_table_schema': {
+        const res = await fetch(
+          `${MCP_SQL_URL}/schema?server=${encodeURIComponent(args.server)}&database=${encodeURIComponent(args.database)}&table=${encodeURIComponent(args.table)}`
+        );
+        return await res.json();
+      }
+      case 'execute_sql_query': {
+        const res = await fetch(`${MCP_SQL_URL}/query`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(args),
+        });
+        return await res.json();
+      }
+      default:
+        return { error: `Herramienta desconocida: ${toolName}` };
+    }
+  } catch (err) {
+    console.error(`[gateway] Error ejecutando herramienta ${toolName}:`, err.message);
+    return { error: err.message };
+  }
+}
+
+// ─────────────────────────────────────────
+// SYSTEM PROMPT
+// Define la personalidad y límites del agente
+// ─────────────────────────────────────────
+function buildSystemPrompt() {
+  return `Eres NovaChat, un asistente profesional de infraestructura de Novasoft.
+
+CAPACIDADES ACTUALES:
+- Consultar bases de datos SQL Server usando lenguaje natural
+- Listar servidores, bases de datos y tablas disponibles
+
+REGLAS IMPORTANTES:
+1. SIEMPRE que el usuario pida datos de una tabla, primero usa get_table_schema para conocer las columnas exactas antes de generar el SQL.
+2. Si el usuario no especifica el servidor, usa list_sql_servers y luego pregunta o elige el más apropiado según el contexto.
+3. Si el usuario no especifica la base de datos, usa list_databases para listar las disponibles y preguntar.
+4. Genera SQL T-SQL válido, sin punto y coma al final.
+5. Cuando muestres resultados, sé conciso. Si hay muchas filas, resume los datos más importantes.
+6. Responde siempre en español.
+7. NO inventes nombres de tablas o columnas — siempre consulta el schema primero.
+
+Fecha actual: ${new Date().toLocaleDateString('es-CO', { timeZone: 'America/Bogota' })}`;
+}
+
+// ─────────────────────────────────────────
+// DETECCIÓN DE SI EL RESULTADO PUEDE
+// VISUALIZARSE COMO GRÁFICA
+// ─────────────────────────────────────────
+function analyzeChartPossibility(data) {
+  if (!Array.isArray(data) || data.length < 2) return { possible: false };
+
+  const keys = Object.keys(data[0]);
+  const numericKeys = keys.filter(k => typeof data[0][k] === 'number');
+  const stringKeys = keys.filter(k => typeof data[0][k] === 'string');
+
+  if (numericKeys.length > 0 && stringKeys.length > 0) {
+    return {
+      possible: true,
+      labelKey: stringKeys[0],
+      valueKey: numericKeys[0],
+      chartType: data.length <= 6 ? 'pie' : 'bar',
+    };
+  }
+  return { possible: false };
+}
+
+// ─────────────────────────────────────────
+// ENDPOINT PRINCIPAL: POST /chat
+// Recibe mensaje + historial del frontend
+// ─────────────────────────────────────────
+app.post('/chat', async (req, res) => {
+  const { message, context } = req.body;
+
+  if (!message) {
+    return res.status(400).json({ type: 'error', message: 'Mensaje requerido' });
+  }
+
+  // Construir historial de mensajes para OpenAI
+  const history = context?.history || [];
+  const HISTORY_TURNS = Number(process.env.HISTORY_TURNS) || 3; 
+  const SEND_SYSTEM_PROMPT = process.env.SEND_SYSTEM_PROMPT === 'true'; // si Foundry tiene el system prompt, cambiar a false para no enviarlo redundante en cada petición
+  // Confiar en el historial enviado por el frontend (ya viene recortado por turnos).
+  const messages = [
+    ...(SEND_SYSTEM_PROMPT ? [{ role: 'system', content: buildSystemPrompt() }] : []),
+    ...(Array.isArray(history) && history.length
+      ? history.map(m => ({
+          role: m.role,
+          content: typeof m.content === 'string' && m.content.length > MAX_MESSAGE_CHARS
+            ? m.content.slice(0, MAX_MESSAGE_CHARS) + '...TRUNCATED...'
+            : m.content,
+        }))
+      : []),
+  ];
+
+  // Asegurar de que el último mensaje sea el actual
+  if (messages[messages.length - 1]?.content !== message) {
+    messages.push({ role: 'user', content: message });
   }
 
   try {
-    // 0. FAST-PATH: DETECTAR CONSULTAS ADMIN
-    if (detectAdminQuery(message)) {
-      const adminResult = await handleAdminQuery(message, context);
-      return res.json(adminResult);
-    }
+    // ── Agentic loop: el modelo puede llamar herramientas múltiples veces ──
+    let iterations = 0;
+    const MAX_ITERATIONS = 10; // seguridad anti-loop infinito
 
-    // 1. CLASIFICAR INTENCIÓN
-    const isSQLQuery = await classifyIntent(message);
+    while (iterations < MAX_ITERATIONS) {
+      iterations++;
 
-    if (!isSQLQuery) {
-      console.log("💬 [GATEWAY] Chat general detectado");
-      const response = await chatDirect(message, context?.history);
+      // Instrumentación por petición: id, tamaño estimado y número de mensajes
+      const requestId = `${Date.now()}-${Math.random().toString(36).slice(2,8)}`;
+      const totalChars = messages.reduce((s, m) => s + ((m.content && typeof m.content === 'string') ? m.content.length : 0), 0);
+      const estimatedPromptTokens = Math.ceil(totalChars / 4); // heurística: ~4 chars/token
+      console.log(`[gateway][${requestId}] sending to model: messages=${messages.length} turns=${HISTORY_TURNS} chars=${totalChars} est_prompt_tokens=${estimatedPromptTokens}`);
 
-      return res.json({
-        type: "success",
-        response: response,
-        source: "chat"
+      const completion = await openai.chat.completions.create({
+        model: process.env.AZURE_OPENAI_DEPLOYMENT,
+        messages,
+        tools: MCP_TOOLS,
+        tool_choice: 'auto',
+        max_tokens: Number(process.env.MAX_TOKENS) || 512,
+        temperature: 0.1, // bajo para respuestas más deterministas
       });
-    }
 
-    // 2. ES CONSULTA SQL
-    console.log("📊 [GATEWAY] Consulta SQL detectada");
+      console.log(`[gateway][${requestId}] completion.usage:`, completion.usage);
+      const u = completion.usage || {};
+      console.log(`[gateway][${requestId}] tokens prompt=${u.prompt_tokens} completion=${u.completion_tokens} total=${u.total_tokens}`);
 
-    const contextResult = await resolveContext(message, context);
-    if (!contextResult.resolved) {
-      if (contextResult.ambiguity) {
+      const choice = completion.choices[0];
+      let assistantMessage = choice.message;
+
+      // Truncar la respuesta del asistente si es muy larga para evitar inflar el prompt
+      if (assistantMessage?.content && assistantMessage.content.length > MAX_MESSAGE_CHARS) {
+        assistantMessage = {
+          ...assistantMessage,
+          content: assistantMessage.content.slice(0, MAX_MESSAGE_CHARS) + '...TRUNCATED...',
+        };
+      }
+
+      // Agregar respuesta del asistente al historial de la sesión
+      messages.push(assistantMessage);
+
+      // Si no hay tool calls, el modelo terminó — devolver respuesta final
+      if (choice.finish_reason !== 'tool_calls' || !assistantMessage.tool_calls?.length) {
+        const responseText = assistantMessage.content || 'No se pudo generar una respuesta.';
+
+        // Intentar extraer metadata del último tool call de SQL ejecutado
+        const lastSqlCall = [...messages]
+          .reverse()
+          .find(m => m.role === 'tool' && m.tool_call_type === 'execute_sql_query');
+
         return res.json({
-          type: "ambiguity",
-          message: contextResult.message,
-          options: contextResult.options
+          type: 'success',
+          response: responseText,
+          source: 'azure-openai',
+          metadata: lastSqlCall?.metadata || null,
         });
       }
 
-      return res.json({
-        type: "error",
-        message: contextResult.message
-      });
+      // Procesar cada tool call en paralelo
+      const toolResults = await Promise.all(
+        assistantMessage.tool_calls.map(async (toolCall) => {
+          const toolName = toolCall.function.name;
+          let args = {};
+          try {
+            args = JSON.parse(toolCall.function.arguments || '{}');
+          } catch (_) { }
+
+          console.log(`[gateway][${requestId}] Tool call: ${toolName}`, args);
+          const result = await executeTool(toolName, args);
+          const resultStr = JSON.stringify(result);
+          console.log(`[gateway][${requestId}] Tool result: ${toolName} (chars=${resultStr.length})`);
+
+          // Truncar el contenido de la herramienta antes de añadirlo al historial para evitar inflar el prompt
+          const truncated = resultStr.length > MAX_MESSAGE_CHARS ? resultStr.slice(0, MAX_MESSAGE_CHARS) + '...TRUNCATED...' : resultStr;
+
+          return {
+            role: 'tool',
+            tool_call_id: toolCall.id,
+            content: truncated,
+            // metadata para enriquecer la respuesta final (no se manda a OpenAI como parte del objeto)
+            tool_call_type: toolName,
+            metadata:
+              toolName === 'execute_sql_query'
+                ? { server: args.server, database: args.database }
+                : null,
+          };
+        })
+      );
+
+      // Agregar resultados de herramientas al historial
+      messages.push(...toolResults);
     }
 
-    const target = contextResult.target || {};
-    const server = target.server || DEFAULT_SQL_CONFIG.server;
-    const database = target.database || DEFAULT_SQL_CONFIG.database;
-    const table = target.table || context?.table || DEFAULT_SQL_CONFIG.defaultTable;
-
-    console.log(`📚 Contexto resuelto: ${server}/${database}`);
-
-    // Obtener esquema real de la BD con relaciones
-    const schemaText = await getSchemaWithRelations(server, database);
-
-    const historyItems = Array.isArray(context?.history) ? context.history.slice(-10) : [];
-    const historyText = historyItems
-      .map(item => `- ${item.role}: ${item.content}`)
-      .join("\n");
-
-    // Generar SQL (con correcciones automáticas)
-    let query = await generateSQL(message, database, table, schemaText, historyText);
-    console.log("📝 [GATEWAY] SQL generado:", query);
-
-    // Ejecutar en MCP-SQL
-    const sqlResponse = await fetch(`${MCP_SQL_URL}/query`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        query,
-        connection: {
-          server: server,
-          database: database
-        }
-      })
+    // Si llega aquí, se agotaron las iteraciones
+    return res.json({
+      type: 'error',
+      message: 'El agente no pudo completar la tarea en el número de pasos permitidos.',
     });
-
-    if (!sqlResponse.ok) {
-      const sqlErrorData = await sqlResponse.json().catch(() => ({}));
-      return res.status(sqlResponse.status).json({
-        type: "error",
-        message: sqlErrorData?.message || "Fallo al ejecutar consulta SQL",
-        details: sqlErrorData
-      });
-    }
-
-    const data = await sqlResponse.json();
-
-    // Detectar si quiere gráfica
-    const wantsChart = await detectChartIntent(message);
-
-    // Formatear respuesta
-    let formattedResponse = "";
-    if (data.data && data.data.length > 0) {
-      formattedResponse = `📊 **Resultado de la consulta:**\n\n`;
-      formattedResponse += `Se encontraron ${data.data.length} registros.\n\n`;
-
-      const headers = Object.keys(data.data[0]);
-      formattedResponse += `| ${headers.join(' | ')} |\n`;
-      formattedResponse += `|${headers.map(() => '---').join('|')}|\n`;
-
-      data.data.slice(0, 10).forEach(row => {
-        formattedResponse += `| ${headers.map(h => String(row[h] || '-').slice(0, 30)).join(' | ')} |\n`;
-      });
-
-      if (data.data.length > 10) {
-        formattedResponse += `\n*... y ${data.data.length - 10} registros más.*\n`;
-      }
-    } else {
-      formattedResponse = "✅ Consulta ejecutada correctamente, pero no se encontraron resultados.";
-    }
-
-    res.json({
-      type: "success",
-      response: formattedResponse,
-      source: "sql",
-      data: data.data,
-      wantsChart: wantsChart,
-      chartSuggestion: data.chartSuggestion,
-      metadata: {
-        query: query,
-        database: database,
-        rowCount: data.rowCount
-      }
-    });
-
-  } catch (error) {
-    console.error("❌ [GATEWAY] Error:", error);
-    res.status(500).json({
-      type: "error",
-      message: "Error interno en el gateway",
-      details: error.message
+  } catch (err) {
+    console.error('[gateway] Error en /chat:', err);
+    return res.status(500).json({
+      type: 'error',
+      message: err.message || 'Error interno del servidor',
     });
   }
 });
 
-app.listen(4000, () => {
-  console.log("\n═════════════════════════════════════════════");
-  console.log("🚀 MCP Gateway corriendo en puerto 4000");
-  console.log("📋 Endpoints:");
-  console.log("   POST /execute - Clasifica y ejecuta (chat o SQL)");
-  console.log("   GET  /health  - Verificar estado");
-  console.log("═════════════════════════════════════════════\n");
 
-  refreshSchemaForDatabase(DEFAULT_SQL_CONFIG.server, DEFAULT_SQL_CONFIG.database);
+
+
+
+
+
+// ─────────────────────────────────────────
+// HEALTH CHECK
+// ─────────────────────────────────────────
+app.get('/health', async (req, res) => {
+  let sqlStatus = 'unknown';
+  try {
+    const r = await fetch(`${MCP_SQL_URL}/health`);
+    const d = await r.json();
+    sqlStatus = d.status;
+  } catch (_) {
+    sqlStatus = 'unreachable';
+  }
+
+  res.json({
+    status: 'ok',
+    service: 'gateway',
+    dependencies: { 'mcp-sql': sqlStatus },
+    model: process.env.AZURE_OPENAI_DEPLOYMENT,
+  });
+});
+
+const PORT = process.env.GATEWAY_PORT || 3000;
+app.listen(PORT, () => {
+  console.log(`[gateway] Corriendo en http://localhost:${PORT}`);
 });

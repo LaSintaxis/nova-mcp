@@ -1,89 +1,53 @@
+version: '3.8'
+
 services:
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    ports:
+      - "5173:5173"
+    environment:
+      - VITE_BACKEND_URL=http://backend:3001
+    depends_on:
+      - backend
 
   backend:
-    build: ./backend
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    ports:
+      - "3001:3001"
+    env_file:
+      - ./backend/.env
+    environment:
+      - FRONTEND_URL=http://localhost:5173
+      - GATEWAY_URL=http://gateway:3000
+    depends_on:
+      - gateway
+
+  gateway:
+    build:
+      context: ./gateway
+      dockerfile: Dockerfile
     ports:
       - "3000:3000"
     env_file:
-      - ./backend/.env
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
-    environment:
-      GATEWAY_URL: http://gateway:4000
-    healthcheck:
-      test:
-        - CMD
-        - node
-        - -e
-        - "require('http').get('http://localhost:3000/health',r=>process.exit(r.statusCode===200?0:1)).on('error',()=>process.exit(1))"
-      interval: 15s
-      timeout: 5s
-      retries: 5
-    depends_on:
-      gateway:
-        condition: service_healthy
-
-  gateway:
-    build: ./gateway
-    ports:
-      - "4000:4000"
-    env_file:
       - ./gateway/.env
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
     environment:
-      MCP_SQL_URL: http://mcp-sql:5000
-      CONTEXT_RESOLVER_URL: http://context-resolver:6000
-    healthcheck:
-      test:
-        - CMD
-        - node
-        - -e
-        - "require('http').get('http://localhost:4000/health',r=>process.exit(r.statusCode===200?0:1)).on('error',()=>process.exit(1))"
-      interval: 15s
-      timeout: 5s
-      retries: 5
+      - MCP_SQL_URL=http://mcp-sql:3002
     depends_on:
-      mcp-sql:
-        condition: service_healthy
-      context-resolver:
-        condition: service_healthy
-
-  context-resolver:
-    build: ./context-resolver
-    ports:
-      - "6000:6000"
-    environment:
-      MCP_SQL_URL: http://mcp-sql:5000
-      DEFAULT_SQL_SERVER: sql-01
-      DEFAULT_SQL_DATABASE: master
-    healthcheck:
-      test:
-        - CMD
-        - node
-        - -e
-        - "require('http').get('http://localhost:6000/health',r=>process.exit(r.statusCode===200?0:1)).on('error',()=>process.exit(1))"
-      interval: 15s
-      timeout: 5s
-      retries: 5
-    depends_on:
-      mcp-sql:
-        condition: service_healthy
+      - mcp-sql
 
   mcp-sql:
-    build: ./mcp-sql
+    build:
+      context: ./mcp-sql
+      dockerfile: Dockerfile
     ports:
-      - "5000:5000"
+      - "3002:3002"
     env_file:
       - ./mcp-sql/.env
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
-    healthcheck:
-      test:
-        - CMD
-        - node
-        - -e
-        - "require('http').get('http://localhost:5000/health',r=>process.exit(r.statusCode===200?0:1)).on('error',()=>process.exit(1))"
-      interval: 15s
-      timeout: 5s
-      retries: 5
+
+networks:
+  default:
+    driver: bridge
