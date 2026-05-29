@@ -1,176 +1,209 @@
-import express from "express";
-import sql from "mssql";
+// mcp-sql/index.js
+// Microservicio MCP para SQL Server
+// Lee todos los servidores del .env con prefijo SQL_SERVER_
+// Un mismo usuario/contraseña para todos los servidores
+
+import express from 'express';
+import { createRequire } from 'module';
+import dotenv from 'dotenv';
+import sql from 'mssql';
+
+dotenv.config();
 
 const app = express();
 app.use(express.json());
 
-// ============================================
-// CONFIGURACIÓN DE CONEXIONES
-// ============================================
-// Mapa de conexiones permitidas (solo estas pueden usarse)
-const connectionConfigs = {
-  "sql-01": {
-    server: process.env.SQL_SERVER_01 || "servidor1.database.windows.net",
-    database: process.env.SQL_DATABASE_01 || "ventas",
-    user: process.env.SQL_USER_01,
-    password: process.env.SQL_PASSWORD_01,
-    options: {
-      encrypt: true,
-      trustServerCertificate: false,
-      enableArithAbort: true
-    }
-  },
-  "sql-02": {
-    server: process.env.SQL_SERVER_02 || "servidor2.database.windows.net",
-    database: process.env.SQL_DATABASE_02 || "crm",
-    user: process.env.SQL_USER_02,
-    password: process.env.SQL_PASSWORD_02,
-    options: {
-      encrypt: true,
-      trustServerCertificate: false,
-      enableArithAbort: true
+// ─────────────────────────────────────────
+// CARGA DINÁMICA DE SERVIDORES DESDE .env
+// Detecta automáticamente SQL_SERVER_01, SQL_SERVER_02, etc.
+// Para agregar un nuevo servidor: añadir SQL_SERVER_XX=<ip> al .env
+// ─────────────────────────────────────────
+function loadServersFromEnv() {
+  const servers = {};
+  for (const [key, value] of Object.entries(process.env)) {
+    if (key.startsWith('SQL_SERVER_') && value) {
+      const alias = key.replace('SQL_SERVER_', '').toLowerCase(); // "01", "02", etc.
+      servers[alias] = value.trim();
     }
   }
-};
-
-// ============================================
-// VALIDACIÓN DE QUERIES (SEGURIDAD)
-// ============================================
-function isQuerySafe(query) {
-  const dangerousKeywords = [
-    "DROP", "DELETE", "UPDATE", "INSERT", "ALTER", 
-    "CREATE", "TRUNCATE", "EXEC", "EXECUTE", "xp_"
-  ];
-  
-  const upperQuery = query.toUpperCase();
-  
-  for (const keyword of dangerousKeywords) {
-    if (upperQuery.includes(keyword)) {
-      return false;
-    }
-  }
-  
-  // Solo permitir SELECT
-  if (!upperQuery.trim().startsWith("SELECT")) {
-    return false;
-  }
-  
-  return true;
+  return servers;
 }
 
-// ============================================
-// ENDPOINT PRINCIPAL
-// ============================================
-app.get("/health", (_req, res) => {
-  res.status(200).json({
-    ok: true,
-    service: "mcp-sql"
+const SQL_SERVERS = loadServersFromEnv(); 
+const SQL_USER = process.env.SQL_USER;
+const SQL_PASSWORD = process.env.SQL_PASSWORD;
+
+console.log(`[mcp-sql] Servidores cargados: ${JSON.stringify(SQL_SERVERS)}`);
+
+// Pool de conexiones por servidor (lazy init)
+const pools = {};
+
+async function getPool(serverAlias) {
+  if (pools[serverAlias]) return pools[serverAlias];
+
+  const serverAddress = SQL_SERVERS[serverAlias];
+  if (!serverAddress) throw new Error(`Servidor desconocido: ${serverAlias}`);
+
+  const config = {
+    user: SQL_USER,
+    password: SQL_PASSWORD,
+    server: serverAddress,
+    options: {
+      encrypt: false,           // true si usas Azure SQL
+      trustServerCertificate: true,
+    },
+    pool: {
+      max: 5,
+      min: 0,
+      idleTimeoutMillis: 30000,
+    },
+    connectionTimeout: 15000,
+  };
+
+  // Crear un pool independiente por servidor. Usar sql.connect(config) crea un pool global
+  // que puede causar que todas las conexiones apunten al primer servidor conectado.
+  const pool = new sql.ConnectionPool(config);
+  await pool.connect();
+  pools[serverAlias] = pool;
+  console.log(`[mcp-sql] Pool creado para servidor: ${serverAlias} (${serverAddress})`);
+  return pool;
+}
+
+// ─────────────────────────────────────────
+// HEALTH CHECK
+// ─────────────────────────────────────────
+app.get('/health', (req, res) => {
+  res.json({
+    status: 'ok',
+    service: 'mcp-sql',
+    servers: Object.keys(SQL_SERVERS),
   });
 });
 
-app.post("/query", async (req, res) => {
-  const { query, connection } = req.body;
+// ─────────────────────────────────────────
+// LISTAR SERVIDORES DISPONIBLES
+// ─────────────────────────────────────────
+app.get('/servers', (req, res) => {
+  const list = Object.entries(SQL_SERVERS).map(([alias, address]) => ({
+    alias,
+    address,
+  }));
+  res.json({ servers: list });
+});
 
-  if (!query || typeof query !== "string") {
-    return res.status(400).json({
-      success: false,
-      message: "El campo 'query' es obligatorio"
-    });
-  }
-
-  // ============================================
-  // 1. VALIDAR SEGURIDAD
-  // ============================================
-  if (!isQuerySafe(query)) {
-    console.warn(`Query bloqueada por razones de seguridad: ${query}`);
-    return res.status(403).json({
-      success: false,
-      message: "La consulta contiene operaciones no permitidas. Solo SELECT está autorizado."
-    });
-  }
-
-  // ============================================
-  // 2. OBTENER CONFIGURACIÓN DE CONEXIÓN
-  // ============================================
-  let config;
-  
-  if (connection?.server && connectionConfigs[connection.server]) {
-    config = connectionConfigs[connection.server];
-  } else if (connection?.server) {
-    // Si el servidor no está en la lista blanca, rechazar
-    return res.status(403).json({
-      success: false,
-      message: `Servidor '${connection.server}' no está autorizado`
-    });
-  } else {
-    // Usar el primer servidor por defecto
-    const defaultServer = Object.keys(connectionConfigs)[0];
-    config = connectionConfigs[defaultServer];
-  }
-
-  if (!config) {
-    return res.status(500).json({
-      success: false,
-      message: "No hay configuración de conexión disponible"
-    });
-  }
-
-  console.log("Ejecutando query:", query);
-  console.log("En servidor:", config.server, "base de datos:", config.database);
+// ─────────────────────────────────────────
+// LISTAR BASES DE DATOS DE UN SERVIDOR
+// GET /databases?server=01
+// ─────────────────────────────────────────
+app.get('/databases', async (req, res) => {
+  const { server } = req.query;
+  if (!server) return res.status(400).json({ error: 'Parámetro server requerido' });
 
   try {
-    // ============================================
-    // 3. CONECTAR Y EJECUTAR
-    // ============================================
-    const pool = await sql.connect(config);
-    const result = await pool.request().query(query);
-    await pool.close();
-
-    // ============================================
-    // 4. FORMATEAR RESPUESTA PARA GRÁFICAS
-    // ============================================
-    // Detectar si los datos pueden representarse como gráfica
-    const columns = result.recordset[0] ? Object.keys(result.recordset[0]) : [];
-    
-    // Si hay al menos una columna numérica y una categórica, sugerir gráfica
-    const hasNumericColumn = columns.some(col => 
-      typeof result.recordset[0]?.[col] === 'number'
-    );
-    const hasStringColumn = columns.some(col => 
-      typeof result.recordset[0]?.[col] === 'string'
-    );
-
-    const chartSuggestion = (hasNumericColumn && hasStringColumn) ? {
-      possible: true,
-      xAxis: columns.find(col => typeof result.recordset[0]?.[col] === 'string'),
-      yAxis: columns.find(col => typeof result.recordset[0]?.[col] === 'number'),
-      type: "bar" // o "line" dependiendo de los datos
-    } : null;
-
-    res.json({
-      success: true,
-      connection: {
-        server: config.server,
-        database: config.database
-      },
-      query: query,
-      data: result.recordset,
-      rowCount: result.recordset.length,
-      columns: columns,
-      chartSuggestion: chartSuggestion
-    });
-
-  } catch (error) {
-    console.error("Error ejecutando query:", error);
-    res.status(500).json({
-      success: false,
-      message: "Error ejecutando la consulta en la base de datos",
-      sqlError: error.message
-    });
+    const pool = await getPool(server);
+    const result = await pool.request().query(`
+      SELECT name FROM sys.databases
+      WHERE name NOT IN ('master','tempdb','model','msdb')
+      ORDER BY name
+    `);
+    res.json({ server, databases: result.recordset.map(r => r.name) });
+  } catch (err) {
+    console.error(`[mcp-sql] Error listando DBs en ${server}:`, err.message);
+    res.status(500).json({ error: err.message });
   }
 });
 
-app.listen(5000, () => {
-  console.log("MCP SQL corriendo en puerto 5000");
-  console.log("✅ Conectado a SQL Server real");
+// ─────────────────────────────────────────
+// LISTAR TABLAS DE UNA BASE DE DATOS
+// GET /tables?server=01&database=MiDB
+// ─────────────────────────────────────────
+app.get('/tables', async (req, res) => {
+  const { server, database } = req.query;
+  if (!server || !database) {
+    return res.status(400).json({ error: 'Parámetros server y database requeridos' });
+  }
+
+  try {
+    const pool = await getPool(server);
+    const result = await pool.request().query(`
+      SELECT TABLE_SCHEMA, TABLE_NAME
+      FROM [${database}].INFORMATION_SCHEMA.TABLES
+      WHERE TABLE_TYPE = 'BASE TABLE'
+      ORDER BY TABLE_SCHEMA, TABLE_NAME
+    `);
+    res.json({ server, database, tables: result.recordset });
+  } catch (err) {
+    console.error(`[mcp-sql] Error listando tablas:`, err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ─────────────────────────────────────────
+// EJECUTAR QUERY
+// POST /query
+// Body: { server: "01", database: "MiDB", query: "SELECT TOP 10 * FROM Tabla" }
+// ─────────────────────────────────────────
+app.post('/query', async (req, res) => {
+  const { server, database, query } = req.body;
+
+  if (!server || !database || !query) {
+    return res.status(400).json({ error: 'Campos server, database y query son requeridos' });
+  }
+
+  // Seguridad básica: solo SELECT permitido (hasta que se implemente autorización por AD)
+  // const trimmed = query.trim().toUpperCase();
+  // if (!trimmed.startsWith('SELECT') && !trimmed.startsWith('WITH')) {
+  //   return res.status(403).json({
+  //     error: 'Solo consultas SELECT están permitidas en este momento',
+  //   });
+  // }
+
+  try {
+    const pool = await getPool(server);
+    const result = await pool
+      .request()
+      .query(`USE [${database}]; ${query}`);
+
+    res.json({
+      success: true,
+      server,
+      database,
+      rowCount: result.recordset?.length ?? 0,
+      data: result.recordset ?? [],
+    });
+  } catch (err) {
+    console.error(`[mcp-sql] Error ejecutando query:`, err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ─────────────────────────────────────────
+// INTROSPECCIÓN: COLUMNAS DE UNA TABLA
+// GET /schema?server=01&database=MiDB&table=MiTabla
+// ─────────────────────────────────────────
+app.get('/schema', async (req, res) => {
+  const { server, database, table } = req.query;
+  if (!server || !database || !table) {
+    return res.status(400).json({ error: 'Parámetros server, database y table requeridos' });
+  }
+
+  try {
+    const pool = await getPool(server);
+    const result = await pool.request().query(`
+      SELECT COLUMN_NAME, DATA_TYPE, IS_NULLABLE, CHARACTER_MAXIMUM_LENGTH
+      FROM [${database}].INFORMATION_SCHEMA.COLUMNS
+      WHERE TABLE_NAME = '${table.replace(/'/g, "''")}'
+      ORDER BY ORDINAL_POSITION
+    `);
+    res.json({ server, database, table, columns: result.recordset });
+  } catch (err) {
+    console.error(`[mcp-sql] Error obteniendo schema:`, err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+const PORT = process.env.MCP_SQL_PORT || 3002;
+app.listen(PORT, () => {
+  console.log(`[mcp-sql] Corriendo en http://localhost:${PORT}`);
+  console.log(`[mcp-sql] Servidores disponibles: ${Object.keys(SQL_SERVERS).join(', ')}`);
 });

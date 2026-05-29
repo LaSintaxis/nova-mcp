@@ -1,22 +1,5 @@
-/* ===== PANTALLA DE LOGIN ===== */
-.login-container {
-  height: 100vh;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  background: radial-gradient(ellipse at 20% 30%, #0f172a, #020617);
-}
-
-
-.login-card p {
-  color: var(--color-text-secondary);
-  margin-bottom: 2rem;
-  font-size: 0.9rem;
-}
-
-
-
 /* ===== LOGIN PAGE ===== */
+/****Contenedor universal del login****/
 .login-container {
   position: relative;
   height: 100vh;
@@ -27,7 +10,6 @@
   background: var(--color-bg);
   overflow: hidden;
 }
-
 
 
 .gradient-orb {
@@ -94,12 +76,6 @@
   border: 2px solid rgba(0, 164, 239, 0.3);
 }
 
-.login-logo svg {
-  color: var(--color-accent);
-}
-
-
-
 .login-subtitle {
   font-size: 0.9rem;
   color: var(--color-text-secondary);
@@ -113,12 +89,83 @@
   gap: 1.5rem;
 }
 
+.login-tabs {
+  display: inline-flex;
+  align-self: center;
+  gap: 0.4rem;
+  padding: 0.3rem;
+  border-radius: 999px;
+  background: rgba(15, 23, 42, 0.4);
+  border: 1px solid rgba(148, 163, 184, 0.2);
+}
+
+.login-tab {
+  border: none;
+  background: transparent;
+  color: var(--color-text-secondary);
+  padding: 0.4rem 0.85rem;
+  border-radius: 999px;
+  font-size: 0.85rem;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.login-tab.active {
+  background: rgba(0, 164, 82, 0.2);
+  color: #eafff2;
+  border: 1px solid rgba(0, 213, 102, 0.5);
+}
+
+
 .login-description {
-  font-size: 0.95rem;
   color: var(--color-text-secondary);
   text-align: center;
-  line-height: 1.6;
+  font-size: 0.9rem;
 }
+
+.client-login {
+  display: flex;
+  flex-direction: column;
+  gap: 0.85rem;
+}
+
+.client-input {
+  background: rgba(15, 23, 42, 0.5);
+  border: 1px solid var(--color-border);
+  border-radius: 0.85rem;
+  padding: 0.6rem 0.8rem;
+  color: var(--color-text-primary);
+  font-size: 0.9rem;
+  outline: none;
+  transition: border-color 0.2s ease, box-shadow 0.2s ease;
+}
+
+.client-input:focus {
+  border-color: #00a452;
+  box-shadow: 0 0 0 2px rgba(0, 164, 82, 0.2);
+}
+
+.client-login-button {
+  border: none;
+  background: linear-gradient(135deg, #00a452, #016b28);
+  color: white;
+  padding: 0.85rem 1.5rem;
+  border-radius: 1.5rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+
+.client-login-button:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 8px 20px rgba(0, 164, 82, 0.35);
+}
+
+
+
+
+
+
 
 .microsoft-login-button {
   display: flex;
@@ -128,9 +175,9 @@
   background: linear-gradient(135deg, #00a452, #016b28);
   color: white;
   border: none;
-  padding: 1rem 2rem;
+  padding: 0.9rem 1.5rem;
   border-radius: 2rem;
-  font-size: 1rem;
+  font-size: 0.9rem;
   font-weight: 600;
   cursor: pointer;
   transition: all 0.3s ease;
@@ -181,8 +228,6 @@
   font-size: 0.8rem;
   color: var(--color-text-secondary);
   padding: 0.75rem 1rem;
-  background: rgba(0, 164, 82, 0.05);
-  border: 1px solid rgba(0, 164, 82, 0.2);
   border-radius: 1rem;
 }
 
@@ -267,8 +312,8 @@
   }
   
   .microsoft-login-button {
-    padding: 0.875rem 1.5rem;
-    font-size: 0.9rem;
+    padding: 0.8rem 1.4rem;
+    font-size: 0.8rem;
   }
   
   .microsoft-login-button svg {

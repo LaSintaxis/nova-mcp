@@ -1,150 +1,102 @@
-import express from "express";
-import fetch from "node-fetch";
-import jwt from "jsonwebtoken";
-import jwksClient from "jwks-rsa";
+// import express from "express";
+// import session from "express-session";
+// import cors from "cors";
+// import dotenv from "dotenv";
+// import { ConfidentialClientApplication } from "@azure/msal-node";
+// import ldap from "ldapjs";
 
-const app = express();
-app.use(express.json());
+// dotenv.config();
 
-// ============================================
-// CONFIGURACIÓN ENTRADA ID
-// ============================================
-const TENANT_ID = process.env.TENANT_ID; // Tu Tenant ID de Azure
-const CLIENT_ID = process.env.CLIENT_ID; // Client ID de tu app registration
-const AUTHORITY = `https://login.microsoftonline.com/${TENANT_ID}/v2.0`;
+// const app = express();
 
-// Cliente para obtener la clave pública de Microsoft
-const client = jwksClient({
-  jwksUri: `${AUTHORITY}/discovery/v2.0/keys`
-});
+// app.use(cors({
+//   origin: "http://localhost:5173",
+//   credentials: true,
+// }));
+// app.use(express.json());
+// app.use(session({
+//   secret: process.env.SESSION_SECRET,
+//   resave: false,
+//   saveUninitialized: false,
+//   cookie: { secure: false, httpOnly: true, maxAge: 8 * 60 * 60 * 1000 }, // 8h
+// }));
 
-// Función para obtener la clave pública
-function getKey(header, callback) {
-  client.getSigningKey(header.kid, (err, key) => {
-    if (err) {
-      callback(err);
-    } else {
-      callback(null, key.getPublicKey());
-    }
-  });
-}
+// // MSAL para validar tokens SSO y llamar a Graph
+// const msalClient = new ConfidentialClientApplication({
+//   auth: {
+//     clientId: process.env.AZURE_CLIENT_ID,
+//     authority: `https://login.microsoftonline.com/${process.env.AZURE_TENANT_ID}`,
+//     clientSecret: process.env.AZURE_CLIENT_SECRET,
+//   },
+// });
 
-// ============================================
-// MIDDLEWARE DE AUTENTICACIÓN
-// ============================================
-async function authenticateToken(req, res, next) {
-  const authHeader = req.headers.authorization;
-  const token = authHeader && authHeader.split(' ')[1]; // Bearer TOKEN
+// // ─── Helper: obtener grupos del usuario desde Graph ───────────────────────────
+// async function getUserGroups(accessToken) {
+//   const res = await fetch("https://graph.microsoft.com/v1.0/me/memberOf", {
+//     headers: { Authorization: `Bearer ${accessToken}` },
+//   });
+//   const data = await res.json();
+//   return data.value?.map((g) => g.displayName) ?? [];
+// }
 
-  if (!token) {
-    return res.status(401).json({ 
-      type: "error", 
-      message: "Token no proporcionado" 
-    });
-  }
+// // ─── Middleware: validar token SSO (empleados) ────────────────────────────────
+// export async function requireSSOAuth(req, res, next) {
+//   const authHeader = req.headers.authorization;
+//   if (!authHeader?.startsWith("Bearer ")) {
+//     return res.status(401).json({ message: "Token SSO requerido" });
+//   }
+//   try {
+//     // Validamos el token con MSAL (on-behalf-of flow para llamar a Graph)
+//     const oboResult = await msalClient.acquireTokenOnBehalfOf({
+//       oboAssertion: authHeader.split(" ")[1],
+//       scopes: ["User.Read", "GroupMember.Read.All"],
+//     });
+//     const groups = await getUserGroups(oboResult.accessToken);
+//     req.user = {
+//       type: "sso",
+//       username: oboResult.account?.username,
+//       displayName: oboResult.account?.name,
+//       groups,
+//       accessToken: oboResult.accessToken,
+//     };
+//     next();
+//   } catch (err) {
+//     console.error("SSO validation error:", err);
+//     res.status(401).json({ message: "Token SSO inválido" });
+//   }
+// }
 
-  // Configuración para validar el token
-  const validationOptions = {
-    audience: CLIENT_ID,           // Debe coincidir con el Client ID
-    issuer: `${AUTHORITY}`,        // El emisor debe ser Microsoft
-    algorithms: ["RS256"]
-  };
+// // ─── Middleware: validar sesión de dominio (clientes) ─────────────────────────
+// export function requireDomainAuth(req, res, next) {
+//   if (!req.session?.domainUser) {
+//     return res.status(401).json({ message: "Sesión de dominio requerida" });
+//   }
+//   req.user = req.session.domainUser;
+//   next();
+// }
 
-  jwt.verify(token, getKey, validationOptions, (err, decoded) => {
-    if (err) {
-      console.error("Error validando token:", err);
-      return res.status(403).json({ 
-        type: "error", 
-        message: "Token inválido o expirado",
-        details: err.message
-      });
-    }
+// // ─── Middleware: acepta cualquiera de los dos tipos de auth ───────────────────
+// export async function requireAnyAuth(req, res, next) {
+//   if (req.headers.authorization?.startsWith("Bearer ")) {
+//     return requireSSOAuth(req, res, next);
+//   }
+//   if (req.session?.domainUser) {
+//     return requireDomainAuth(req, res, next);
+//   }
+//   return res.status(401).json({ message: "Autenticación requerida" });
+// }
 
-    // Verificar que el tenant sea el correcto (solo tu empresa)
-    const allowedTenants = process.env.ALLOWED_TENANTS?.split(',') || [TENANT_ID];
-    if (!allowedTenants.includes(decoded.tid)) {
-      return res.status(403).json({
-        type: "error",
-        message: "Acceso denegado. Solo usuarios de la empresa autorizada."
-      });
-    }
 
-    // Guardar información del usuario para logs
-    req.user = {
-      email: decoded.email || decoded.upn || decoded.unique_name,
-      name: decoded.name,
-      tenantId: decoded.tid,
-      userId: decoded.oid
-    };
-    
-    next();
-  });
-}
+// // ─── Ruta: obtener info del usuario actual ────────────────────────────────────
+// app.get("/auth/me", requireAnyAuth, (req, res) => {
+//   res.json(req.user);
+// });
 
-// ============================================
-// RUTAS
-// ============================================
-app.get("/health", (_req, res) => {
-  res.status(200).json({
-    ok: true,
-    service: "backend"
-  });
-});
+// app.get("/auth/logout", (req, res) => {
+//   req.session.destroy();
+//   res.json({ success: true });
+// });
 
-// Ruta protegida con autenticación
-app.post("/chat", authenticateToken, async (req, res) => {
-  const { message, context = {} } = req.body;
-
-  // Agregar información del usuario al contexto
-  const enrichedContext = {
-    ...context,
-    user: req.user  // Para auditoría y logs
-  };
-
-  if (!message || typeof message !== "string") {
-    return res.status(400).json({
-      type: "error",
-      message: "El campo 'message' es obligatorio"
-    });
-  }
-
-  try {
-    const response = await fetch("http://gateway:4000/execute", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json"
-      },
-      body: JSON.stringify({
-        message,
-        context: enrichedContext
-      })
-    });
-
-    const data = await response.json();
-
-    if (!response.ok) {
-      return res.status(response.status).json({
-        type: "error",
-        message: data?.message || "Error al ejecutar consulta en gateway",
-        details: data
-      });
-    }
-
-    return res.json({
-      message: data?.type === "success" ? "Resultado de la consulta" : "Se requiere aclaración",
-      ...data
-    });
-  } catch (error) {
-    console.error("Error en backend /chat:", error);
-
-    return res.status(500).json({
-      type: "error",
-      message: "No fue posible comunicarse con el gateway"
-    });
-  }
-});
-
-app.listen(3000, () => {
-  console.log("Backend corriendo en puerto 3000");
-  console.log("🔐 Autenticación Entra ID activada");
-});
+// app.listen(process.env.BACKEND_PORT || 3001, () => {
+//   console.log(`Backend corriendo en puerto ${process.env.BACKEND_PORT || 3001}`);
+// });

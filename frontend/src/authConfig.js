@@ -1,7 +1,21 @@
 export const msalConfig = {
   auth: {
-    clientId: "tu-client-id",
-    authority: "https://login.microsoftonline.com/tu-tenant-id",
-    redirectUri: "http://localhost:5173"  // ← Mismo valor que en Azure
-  }
+    clientId: import.meta.env.VITE_ENTRA_CLIENT_ID,
+    authority: `https://login.microsoftonline.com/${import.meta.env.VITE_ENTRA_TENANT_ID}`,
+    redirectUri: window.location.origin,
+    navigateToLoginRequestUrl: false
+  },
+  cache: { cacheLocation: 'localStorage' }
+};
+
+const backendScope = import.meta.env.VITE_BACKEND_SCOPE || `api://${import.meta.env.VITE_ENTRA_CLIENT_ID}/access_as_user`;
+
+// Para empleados (SSO con Microsoft)
+export const employeeLoginRequest = {
+  scopes: [backendScope, 'openid', 'profile']
+};
+
+// Para clientes (usuario/contraseña) - solo se usa en el backend
+export const tokenRequest = {
+  scopes: [backendScope]
 };
