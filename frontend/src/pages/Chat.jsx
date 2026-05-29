@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { useMsal, useIsAuthenticated } from '@azure/msal-react';
 import ChatHeader from '../components/ChatHeader';
 import MessageList from '../components/MessageList';
 import MessageInput from '../components/MessageInput';
@@ -8,13 +9,10 @@ const GATEWAY_URL = import.meta.env.VITE_GATEWAY_URL || 'http://localhost:3000';
 const HISTORY_TURNS = Number(import.meta.env.VITE_HISTORY_TURNS) || 3;
 const MAX_MESSAGE_CHARS = Number(import.meta.env.VITE_MAX_MESSAGE_CHARS) || 800;
 
-const WELCOME_MESSAGE = {
-  id: 1,
-  role: 'assistant',
-  content: '¡Hola! Soy tu asistente de infraestructura de Novasoft.\n\nPuedo ayudarte con:\n 📊 Consultas y gráficas de datos de SQL\n 🖥️ Estado de servidores y máquinas virtuales\n\n¿Qué necesitas hoy?'
-};
 
-function loadHistoryFromStorage() {
+// Carga el historial de chat desde localStorage, o retorna el mensaje de bienvenida si no hay nada guardado.
+// Agrega el parámetro 'defaultMessage'
+function loadHistoryFromStorage(defaultMessage) {
   try {
     const saved = localStorage.getItem('chat_history');
     if (saved) {
@@ -22,11 +20,12 @@ function loadHistoryFromStorage() {
       if (Array.isArray(parsed) && parsed.length > 0) return parsed;
     }
   } catch (err) {
-    console.warn('⚠️ No se pudo cargar historial desde localStorage:', err);
+    console.warn('No se pudo cargar historial desde localStorage:', err);
   }
-  return [WELCOME_MESSAGE];
+  return [defaultMessage]; // Retorna el parámetro
 }
-// Extraer los últimos N turnos (user+assistant). Devuelve un array de mensajes en orden cronológico.
+
+// Extraer los últimos N turnos (usuario+asistente). Devuelve un array de mensajes en orden cronológico.
 function sliceLastNTurns(messagesArr, turns) {
   const rev = [...messagesArr].reverse();
   const groups = [];
@@ -54,7 +53,21 @@ function sliceLastNTurns(messagesArr, turns) {
 }
 
 const ChatInterface = () => {
-  const [messages, setMessages] = useState(loadHistoryFromStorage);
+  const { accounts } = useMsal();
+
+  // Extraemos solo el primer nombre para que el saludo sea más casual ("¡Hola Juan!")
+  const activeAccount = accounts[0];
+  const firstName = activeAccount ? activeAccount.name.split(' ')[0] : '';
+
+
+  const WELCOME_MESSAGE = {
+    id: 1,
+    role: 'assistant',
+    content: `¡Hola, ${firstName}! Soy tu asistente de infraestructura de Novasoft.\n\nPuedo ayudarte con:\n 📊 Consultas y gráficas de datos de SQL\n 🖥️ Estado de servidores y máquinas virtuales\n\n¿Qué necesitas hoy?`
+  };
+
+  const [messages, setMessages] = useState(() => loadHistoryFromStorage(WELCOME_MESSAGE));
+  
   const [isLoading, setIsLoading] = useState(false);
   const [inputValue, setInputValue] = useState('');
 
@@ -212,20 +225,10 @@ const ChatInterface = () => {
     }
   };
 
-  // Usuario mock — en producción viene del token de MSAL / JWT
-  const userName = 'Usuario Prueba';
-  const userEmail = 'prueba@novasoft.com';
 
   return (
     <div className="app-container">
-      <ChatHeader
-        userName={userName}
-        userEmail={userEmail}
-        onLogout={() => {
-          console.log('Logout - Modo prueba sin autenticación');
-          localStorage.removeItem('chat_history');
-        }}
-      />
+      <ChatHeader  />
       <MessageList messages={messages} isLoading={isLoading} />
       <MessageInput
         value={inputValue}

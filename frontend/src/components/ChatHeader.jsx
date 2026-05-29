@@ -1,12 +1,22 @@
 import { useEffect, useRef, useState } from 'react'
+import { useMsal } from '@azure/msal-react' // <-- Importar MSAL
 import '../styles/ChatHeader.css';
 
-const ChatHeader = ({ onLogout = () => {} }) => {
+const ChatHeader = () => { // Quitamos onLogout de los props, MSAL lo maneja
   const [isMenuOpen, setIsMenuOpen] = useState(false)
   const dropdownRef = useRef(null)
-  const loggedUserName = 'Pepito Perez'
+  
+  // 1. Instanciar MSAL para obtener los datos y la función de logout
+  const { instance, accounts } = useMsal()
+  
+  // 2. Extraer el nombre real del usuario de Entra ID
+  const activeAccount = accounts[0]
+  const loggedUserName = activeAccount ? activeAccount.name : 'Usuario'
+  
   const [firstName = '', firstLastName = ''] = loggedUserName.trim().split(/\s+/)
-  const userInitials = `${firstName.charAt(0)}${firstLastName.charAt(0)}`.toUpperCase()
+  const userInitials = firstName || firstLastName 
+    ? `${firstName.charAt(0)}${firstLastName.charAt(0)}`.toUpperCase() 
+    : 'U'
 
   useEffect(() => {
     const handleClickOutside = (event) => {
@@ -32,14 +42,18 @@ const ChatHeader = ({ onLogout = () => {} }) => {
 
   const handleLogoutClick = () => {
     setIsMenuOpen(false)
-    onLogout()
+    // 3. Ejecutar el cierre de sesión oficial de Microsoft
+    // Esto borra los tokens de caché y redirige a la página principal
+    instance.logoutRedirect({
+      postLogoutRedirectUri: "/",
+    });
   }
 
   return (
     <header className="chat-header">
       <div>
-        <img src='../public/nova-logo.png' alt="Nova Logo" />
-        
+        {/* Asegúrate de que la ruta de la imagen sea correcta para Vite */}
+        <img src='/nova-logo.png' alt="Nova Logo" />
       </div>
       <div className="user-info" ref={dropdownRef}>
         <button
@@ -52,7 +66,7 @@ const ChatHeader = ({ onLogout = () => {} }) => {
           <span className="user-avatar" title={loggedUserName} aria-hidden="true">
             {userInitials}
           </span>
-          <span className="user-name">Pepito Perez</span>
+          <span className="user-name">{loggedUserName}</span>
           <span className="user-caret" aria-hidden="true">▾</span>
         </button>
 
