@@ -34,7 +34,7 @@ const MessageInput = ({ value, onChange, onSend, isLoading }) => {
         </button>
       </div>
       <div className="input-footer">
-        <p>Conectado a MCP Server • Novasoft 2026</p>
+        <p>Novachat es una IA y puede cometer errores • Novasoft 2026</p>
       </div>
     </div>
   )

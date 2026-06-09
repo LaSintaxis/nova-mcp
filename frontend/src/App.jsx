@@ -1,8 +1,7 @@
-// frontend/src/App.jsx
 import { BrowserRouter as Router, Routes, Route } from 'react-router-dom'
 import Login from './pages/Login'
 import Chat from './pages/Chat'
-import ProtectedRoute from './components/ProtectedRoute' // <-- Importa el guardián
+import ProtectedRoute from './components/ProtectedRoute' 
 
 function App() {
   return (
