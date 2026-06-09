@@ -1,18 +1,22 @@
 import { useState, useEffect } from 'react';
+import { useMsal } from '@azure/msal-react';
 import { useNavigate } from 'react-router-dom';
-import { useMsal, useIsAuthenticated } from '@azure/msal-react';
 import ChatHeader from '../components/ChatHeader';
 import MessageList from '../components/MessageList';
 import MessageInput from '../components/MessageInput';
+import { apiTokenRequest } from '../auth/msalConfig';
 
 const GATEWAY_URL = import.meta.env.VITE_GATEWAY_URL || 'http://localhost:3000';
 const HISTORY_TURNS = Number(import.meta.env.VITE_HISTORY_TURNS) || 3;
 const MAX_MESSAGE_CHARS = Number(import.meta.env.VITE_MAX_MESSAGE_CHARS) || 800;
 
+const WELCOME_MESSAGE = {
+  id: 1,
+  role: 'assistant',
+  content: '¡Hola! Soy tu asistente de infraestructura de Novasoft.\n\nPuedo ayudarte con:\n 📊 Consultas y gráficas de datos de SQL\n 🖥️ Estado de servidores y máquinas virtuales\n\n¿Qué necesitas hoy?'
+};
 
-// Carga el historial de chat desde localStorage, o retorna el mensaje de bienvenida si no hay nada guardado.
-// Agrega el parámetro 'defaultMessage'
-function loadHistoryFromStorage(defaultMessage) {
+function loadHistoryFromStorage() {
   try {
     const saved = localStorage.getItem('chat_history');
     if (saved) {
@@ -20,12 +24,12 @@ function loadHistoryFromStorage(defaultMessage) {
       if (Array.isArray(parsed) && parsed.length > 0) return parsed;
     }
   } catch (err) {
-    console.warn('No se pudo cargar historial desde localStorage:', err);
+    console.warn(' No se pudo cargar historial desde localStorage:', err);
   }
-  return [defaultMessage]; // Retorna el parámetro
+  return [WELCOME_MESSAGE];
 }
 
-// Extraer los últimos N turnos (usuario+asistente). Devuelve un array de mensajes en orden cronológico.
+// Extraer los últimos N turnos (user+assistant). Devuelve un array de mensajes en orden cronológico.
 function sliceLastNTurns(messagesArr, turns) {
   const rev = [...messagesArr].reverse();
   const groups = [];
@@ -53,23 +57,14 @@ function sliceLastNTurns(messagesArr, turns) {
 }
 
 const ChatInterface = () => {
-  const { accounts } = useMsal();
-
-  // Extraemos solo el primer nombre para que el saludo sea más casual ("¡Hola Juan!")
-  const activeAccount = accounts[0];
-  const firstName = activeAccount ? activeAccount.name.split(' ')[0] : '';
-
-
-  const WELCOME_MESSAGE = {
-    id: 1,
-    role: 'assistant',
-    content: `¡Hola, ${firstName}! Soy tu asistente de infraestructura de Novasoft.\n\nPuedo ayudarte con:\n 📊 Consultas y gráficas de datos de SQL\n 🖥️ Estado de servidores y máquinas virtuales\n\n¿Qué necesitas hoy?`
-  };
-
-  const [messages, setMessages] = useState(() => loadHistoryFromStorage(WELCOME_MESSAGE));
-  
+  // BUG 7 FIX: Una sola fuente de verdad — el useState lee localStorage una vez al montar.
+  // Ya no hay useEffect duplicado que vuelva a leer y sobrescriba.
+  const [messages, setMessages] = useState(loadHistoryFromStorage);
   const [isLoading, setIsLoading] = useState(false);
   const [inputValue, setInputValue] = useState('');
+
+  const { instance, accounts } = useMsal();
+  const navigate = useNavigate();
 
   // Guardar historial en localStorage cuando cambian los mensajes
   useEffect(() => {
@@ -82,6 +77,22 @@ const ChatInterface = () => {
       console.warn('¿Error guardando historial:', err);
     }
   }, [messages]);
+
+
+  useEffect(() => {
+    if (!accounts || accounts.length === 0) navigate('/');
+  }, [accounts, navigate]);
+
+  // Obtener token de MSAL para autenticación
+  const getToken = async () => {
+    try {
+      const response = await instance.acquireTokenSilent(apiTokenRequest);
+      return response.accessToken;
+    } catch (error) {
+      console.error('Error obteniendo token:', error);
+      return null;
+    }
+  };
 
   const handleSend = async () => {
     if (!inputValue.trim() || isLoading) return;
@@ -98,6 +109,9 @@ const ChatInterface = () => {
     setIsLoading(true);
 
     try {
+      const token = await getToken();
+      if (!token) throw new Error('No se pudo obtener token de autenticación');
+
       // Historial reducido (últimos N turnos) para ahorrar tokens
       function sliceLastNTurns(messagesArr, turns) {
         const rev = [...messagesArr].reverse();
@@ -137,11 +151,15 @@ const ChatInterface = () => {
       const response = await fetch(`${GATEWAY_URL}/chat`, {
         method: 'POST',
         headers: {
-          'Content-Type': 'application/json'
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
         },
         body: JSON.stringify({
           message: userQuestion,
           context: { history }
+          // BUG 4 PREP: en modo SSO real, el user vendrá del token en el backend.
+          // En modo cliente con usuario/contraseña, el token se decodifica en el backend.
+          // No enviar datos de usuario desde el frontend — siempre del token validado.
         })
       });
 
@@ -225,10 +243,23 @@ const ChatInterface = () => {
     }
   };
 
+  // Usuario desde el token de MSAL
+  const userName = accounts[0]?.name || 'Usuario';
+  const userEmail = accounts[0]?.username || '';
+
+  if (!accounts || accounts.length === 0) return null;
 
   return (
     <div className="app-container">
-      <ChatHeader  />
+      <ChatHeader
+        userName={userName}
+        userEmail={userEmail}
+        onLogout={() => {
+          instance.logoutPopup().catch(console.error);
+          localStorage.removeItem('chat_history');
+          navigate('/');
+        }}
+      />
       <MessageList messages={messages} isLoading={isLoading} />
       <MessageInput
         value={inputValue}

@@ -1,6 +1,6 @@
-import { useState, useEffect } from 'react'; // <-- 1. Agrega useEffect
+import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { useMsal, useIsAuthenticated } from '@azure/msal-react'; // <-- 2. Agrega useIsAuthenticated
+import { useMsal, useIsAuthenticated } from '@azure/msal-react';
 import { employeeLoginRequest } from '../auth/msalConfig';
 import axios from 'axios';
 import '../styles/Login.css';
@@ -8,8 +8,7 @@ import '../styles/Login.css';
 const Login = () => {
   const navigate = useNavigate();
   const { instance } = useMsal();
-  const isAuthenticated = useIsAuthenticated(); // <-- 3. Inicializa el hook
-  
+  const isAuthenticated = useIsAuthenticated(); 
   const [isLoading, setIsLoading] = useState(false);
   const [activeTab, setActiveTab] = useState('employees');
   const [clientUser, setClientUser] = useState('');
@@ -17,7 +16,7 @@ const Login = () => {
   const [clientLoading, setClientLoading] = useState(false);
   const [error, setError] = useState('');
 
-  // 4. Agrega este efecto para escuchar cuando la autenticación sea exitosa
+  // efecto para escuchar cuando la autenticación sea exitosa
   useEffect(() => {
     if (isAuthenticated) {
       navigate('/chat');
@@ -54,31 +53,8 @@ const Login = () => {
           <br />
 
           <div className="login-body">
-            <div className="login-tabs" role="tablist" aria-label="Tipo de acceso">
-              <button
-                type="button"
-                className={`login-tab ${activeTab === 'clients' ? 'active' : ''}`}
-                role="tab"
-                aria-selected={activeTab === 'clients'}
-                onClick={() => setActiveTab('clients')}
-              >
-                Cliente
-              </button>
-              <button
-                type="button"
-                className={`login-tab ${activeTab === 'employees' ? 'active' : ''}`}
-                role="tab"
-                aria-selected={activeTab === 'employees'}
-                onClick={() => setActiveTab('employees')}
-              >
-                Empleado
-              </button>
-            </div>
-
             <p className="login-description">
-              {activeTab === 'employees'
-                ? 'Acceda con su cuenta corporativa de Microsoft para comenzar'
-                : 'Ingrese sus credenciales de dominio para continuar'}
+              Acceda con su cuenta corporativa de Microsoft para comenzar
             </p>
 
             {error && (
@@ -87,7 +63,7 @@ const Login = () => {
               </p>
             )}
 
-            {/* EMPLEADO: SSO Microsoft */}
+            {/* colaborador: SSO Microsoft */}
             {activeTab === 'employees' && (
               <button
                 className="microsoft-login-button"
@@ -104,34 +80,7 @@ const Login = () => {
               </button>
             )}
 
-            {/* CLIENTE: Usuario/contraseña */}
-            {activeTab === 'clients' && (
-              <form className="client-login">
-                <input
-                  type="text"
-                  className="client-input"
-                  placeholder="Usuario de dominio (ej: empresa\usuario)"
-                  value={clientUser}
-                  onChange={(e) => setClientUser(e.target.value)}
-                  disabled={clientLoading}
-                />
-                <input
-                  type="password"
-                  className="client-input"
-                  placeholder="Contraseña"
-                  value={clientPassword}
-                  onChange={(e) => setClientPassword(e.target.value)}
-                  disabled={clientLoading}
-                />
-                <button
-                  className="microsoft-login-button"
-                  type="submit"
-                  disabled={clientLoading}
-                >
-                  {clientLoading ? 'Validando...' : 'Iniciar sesión'}
-                </button>
-              </form>
-            )}
+            
 
             <div className="login-security-info">
               <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
@@ -154,21 +103,14 @@ const Login = () => {
               <div className="feature-icon">📊</div>
               <div>
                 <h3>Consultas SQL</h3>
-                <p>Accede a tus bases de datos en lenguaje natural</p>
+                <p>Obtenga información e interpretaciones de bases de datos</p>
               </div>
             </div>
             <div className="feature-item">
               <div className="feature-icon">🖥️</div>
               <div>
                 <h3>Gestión de VMs</h3>
-                <p>Controla tus máquinas virtuales</p>
-              </div>
-            </div>
-            <div className="feature-item">
-              <div className="feature-icon">📈</div>
-              <div>
-                <h3>Reportes SSRS</h3>
-                <p>Consulta tus reportes empresariales</p>
+                <p>Monitoree máquinas virtuales</p>
               </div>
             </div>
           </div>
