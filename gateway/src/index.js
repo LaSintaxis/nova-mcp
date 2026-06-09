@@ -6,22 +6,17 @@ import express from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
 import { AzureOpenAI } from 'openai';
+// Poner esto:
+import { authMiddleware } from './middleware/auth.js';
+
 
 dotenv.config();
 
 const app = express();
 app.use(cors({ origin: process.env.FRONTEND_URL || 'http://localhost:5173' }));
 app.use(express.json());
+app.use(authMiddleware);
 
-// Simple auth guard: reject requests without an Authorization: Bearer <token> header
-app.use((req, res, next) => {
-  if (req.path === '/health') return next();
-  const auth = req.headers.authorization || '';
-  if (!auth.startsWith('Bearer ')) {
-    return res.status(401).json({ type: 'error', message: 'Unauthorized: missing Bearer token' });
-  }
-  next();
-});
 
 const MAX_MESSAGE_CHARS = Number(process.env.MAX_MESSAGE_CHARS) || 800;
 

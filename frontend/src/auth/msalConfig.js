@@ -19,8 +19,6 @@ export const employeeLoginRequest = {
   ]
 };
 
-// frontend/src/auth/msalConfig.js
-
 export const apiTokenRequest = {
   // Pedimos un token ÚNICAMENTE para tu backend, sin mezclarlo con Microsoft Graph
   scopes: [`api://${import.meta.env.VITE_AZURE_CLIENT_ID}/access_as_user`]

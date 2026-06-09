@@ -49,7 +49,7 @@ async function getPool(serverAlias) {
     password: SQL_PASSWORD,
     server: serverAddress,
     options: {
-      encrypt: false,           // true si usas Azure SQL
+      encrypt: false,           // true si es Azure SQL
       trustServerCertificate: true,
     },
     pool: {
@@ -115,7 +115,7 @@ app.get('/databases', async (req, res) => {
 
 // ─────────────────────────────────────────
 // LISTAR TABLAS DE UNA BASE DE DATOS
-// GET /tables?server=01&database=MiDB
+// GET /tables?server=01&database=DB
 // ─────────────────────────────────────────
 app.get('/tables', async (req, res) => {
   const { server, database } = req.query;
