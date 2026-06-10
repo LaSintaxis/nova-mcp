@@ -11,19 +11,16 @@ const Login = () => {
   const isAuthenticated = useIsAuthenticated(); 
   const [isLoading, setIsLoading] = useState(false);
   const [activeTab, setActiveTab] = useState('employees');
-  const [clientUser, setClientUser] = useState('');
-  const [clientPassword, setClientPassword] = useState('');
-  const [clientLoading, setClientLoading] = useState(false);
   const [error, setError] = useState('');
 
-  // efecto para escuchar cuando la autenticación sea exitosa
+  // efecto para cuando la autenticación sea exitosa
   useEffect(() => {
     if (isAuthenticated) {
       navigate('/chat');
     }
   }, [isAuthenticated, navigate]);
 
-  // ── SSO Empleados ──────────────────────────────────────────────
+  // ── SSO ─────────────
   const handleMicrosoftLogin = async () => {
     setIsLoading(true);
     setError('');
