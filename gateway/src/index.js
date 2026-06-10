@@ -12,7 +12,11 @@ import { authMiddleware } from './middleware/auth.js';
 dotenv.config();
 
 const app = express();
-app.use(cors({ origin: process.env.FRONTEND_URL || 'http://localhost:5173' }));
+app.use(cors({
+  origin: process.env.FRONTEND_URL || 'http://localhost:5173',
+  methods: ['GET', 'POST', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization'],
+}));
 app.use(express.json());
 app.use(authMiddleware);
 
@@ -292,11 +296,33 @@ app.post('/chat', async (req, res) => {
           .reverse()
           .find(m => m.role === 'tool' && m.tool_call_type === 'execute_sql_query');
 
+        // Intentar adjuntar datos de la última llamada SQL (si existe) y sugerir gráfico
+        let extra = {};
+        if (lastSqlCall && lastSqlCall.content) {
+          try {
+            const parsed = JSON.parse(lastSqlCall.content);
+            // El microservicio mcp-sql devuelve { success, server, database, rowCount, data }
+            if (parsed && parsed.data && Array.isArray(parsed.data)) {
+              const chartInfo = analyzeChartPossibility(parsed.data);
+              extra = {
+                data: parsed.data,
+                rowCount: parsed.rowCount ?? parsed.data.length ?? 0,
+                chartSuggestion: chartInfo,
+                wantsChart: chartInfo.possible === true,
+              };
+            }
+          } catch (e) {
+            // no hacer nada si no es JSON
+            console.warn('[gateway] no se pudo parsear lastSqlCall.content para adjuntar data:', e.message);
+          }
+        }
+
         return res.json({
           type: 'success',
           response: responseText,
           source: 'azure-openai',
           metadata: lastSqlCall?.metadata || null,
+          ...extra,
         });
       }
 
