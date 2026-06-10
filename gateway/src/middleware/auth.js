@@ -1,6 +1,7 @@
 // gateway/src/middleware/auth.js
 import jwt from 'jsonwebtoken';
 import jwksClient from 'jwks-rsa';
+import https from 'https';
 import dotenv from 'dotenv';
 dotenv.config(); // ← cargar variables antes de usarlas
 
@@ -8,6 +9,7 @@ const client = jwksClient({
     jwksUri: `https://login.microsoftonline.com/${process.env.AZURE_TENANT_ID}/discovery/v2.0/keys`,
     cache: true,
     rateLimit: true,
+    requestAgent: new https.Agent({ rejectUnauthorized: false }),
 });
 
 function getKey(header, callback) {
