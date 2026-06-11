@@ -2,15 +2,13 @@ import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useMsal, useIsAuthenticated } from '@azure/msal-react';
 import { employeeLoginRequest } from '../auth/msalConfig';
-import axios from 'axios';
 import '../styles/Login.css';
 
 const Login = () => {
   const navigate = useNavigate();
   const { instance } = useMsal();
-  const isAuthenticated = useIsAuthenticated(); 
+  const isAuthenticated = useIsAuthenticated();
   const [isLoading, setIsLoading] = useState(false);
-  const [activeTab, setActiveTab] = useState('employees');
   const [error, setError] = useState('');
 
   // efecto para cuando la autenticación sea exitosa
@@ -60,29 +58,27 @@ const Login = () => {
               </p>
             )}
 
-            {/* colaborador: SSO Microsoft */}
-            {activeTab === 'employees' && (
-              <button
-                className="microsoft-login-button"
-                disabled={isLoading}
-                onClick={handleMicrosoftLogin}
-              >
-                <svg width="18" height="18" viewBox="0 0 18 18" fill="none">
-                  <rect x="1" y="1" width="7" height="7" fill="currentColor"/>
-                  <rect x="10" y="1" width="7" height="7" fill="currentColor"/>
-                  <rect x="1" y="10" width="7" height="7" fill="currentColor"/>
-                  <rect x="10" y="10" width="7" height="7" fill="currentColor"/>
-                </svg>
-                {isLoading ? 'Conectando...' : 'Iniciar sesión con Microsoft'}
-              </button>
-            )}
+            <button
+              className="microsoft-login-button"
+              disabled={isLoading}
+              onClick={handleMicrosoftLogin}
+            >
+              <svg width="18" height="18" viewBox="0 0 18 18" fill="none">
+                <rect x="1" y="1" width="7" height="7" fill="currentColor" />
+                <rect x="10" y="1" width="7" height="7" fill="currentColor" />
+                <rect x="1" y="10" width="7" height="7" fill="currentColor" />
+                <rect x="10" y="10" width="7" height="7" fill="currentColor" />
+              </svg>
+              {isLoading ? 'Conectando...' : 'Iniciar sesión con Microsoft'}
+            </button>
 
-            
+
+
 
             <div className="login-security-info">
               <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
-                <path d="M8 1L2 4v4c0 3.31 4 6 6 6s6-2.69 6-6V4l-6-3z" stroke="currentColor" strokeWidth="1.5" fill="none"/>
-                <path d="M5 8l2 2 4-4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
+                <path d="M8 1L2 4v4c0 3.31 4 6 6 6s6-2.69 6-6V4l-6-3z" stroke="currentColor" strokeWidth="1.5" fill="none" />
+                <path d="M5 8l2 2 4-4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
               </svg>
               <span>Sus datos están protegidos por Azure AD</span>
             </div>

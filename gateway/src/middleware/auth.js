@@ -36,21 +36,19 @@ export function authMiddleware(req, res, next) {
     // Log temporal para diagnóstico
     try {
         const payload = JSON.parse(Buffer.from(token.split('.')[1], 'base64').toString());
-        console.log('[auth] aud:', payload.aud);
-        console.log('[auth] iss:', payload.iss);
     } catch (e) { console.warn('[auth] no se pudo leer el payload del token'); }
 
     jwt.verify(token, getKey, {
-            // Allow multiple possible audiences and issuers (Azure may emit different variants)
-            audience: [
-                `api://${process.env.AZURE_CLIENT_ID}`,
-                process.env.AZURE_CLIENT_ID
-            ],
-            issuer: [
-                `https://login.microsoftonline.com/${process.env.AZURE_TENANT_ID}/v2.0`, // v2.0 issuer
-                `https://login.microsoftonline.com/${process.env.AZURE_TENANT_ID}/`,     // v1 issuer format
-                `https://sts.windows.net/${process.env.AZURE_TENANT_ID}/`               // older STS issuer
-            ],
+        // Allow multiple possible audiences and issuers (Azure may emit different variants)
+        audience: [
+            `api://${process.env.AZURE_CLIENT_ID}`,
+            process.env.AZURE_CLIENT_ID
+        ],
+        issuer: [
+            `https://login.microsoftonline.com/${process.env.AZURE_TENANT_ID}/v2.0`, // v2.0 issuer
+            `https://login.microsoftonline.com/${process.env.AZURE_TENANT_ID}/`,     // v1 issuer format
+            `https://sts.windows.net/${process.env.AZURE_TENANT_ID}/`               // older STS issuer
+        ],
         algorithms: ['RS256'],
     }, (err, decoded) => {
         if (err) {
