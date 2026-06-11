@@ -23,7 +23,8 @@ function getKey(header, callback) {
 }
 
 export function authMiddleware(req, res, next) {
-    if (req.path === '/health') return next();
+    // Allow health checks and CORS preflight through
+    if (req.path === '/health' || req.method === 'OPTIONS') return next();
 
     const auth = req.headers.authorization || '';
     if (!auth.startsWith('Bearer ')) {
@@ -40,8 +41,16 @@ export function authMiddleware(req, res, next) {
     } catch (e) { console.warn('[auth] no se pudo leer el payload del token'); }
 
     jwt.verify(token, getKey, {
-        audience: `api://${process.env.AZURE_CLIENT_ID}`,
-        issuer: `https://sts.windows.net/${process.env.AZURE_TENANT_ID}/`,  // ← v1
+            // Allow multiple possible audiences and issuers (Azure may emit different variants)
+            audience: [
+                `api://${process.env.AZURE_CLIENT_ID}`,
+                process.env.AZURE_CLIENT_ID
+            ],
+            issuer: [
+                `https://login.microsoftonline.com/${process.env.AZURE_TENANT_ID}/v2.0`, // v2.0 issuer
+                `https://login.microsoftonline.com/${process.env.AZURE_TENANT_ID}/`,     // v1 issuer format
+                `https://sts.windows.net/${process.env.AZURE_TENANT_ID}/`               // older STS issuer
+            ],
         algorithms: ['RS256'],
     }, (err, decoded) => {
         if (err) {

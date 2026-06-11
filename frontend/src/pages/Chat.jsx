@@ -57,8 +57,6 @@ function sliceLastNTurns(messagesArr, turns) {
 }
 
 const ChatInterface = () => {
-  // BUG 7 FIX: Una sola fuente de verdad — el useState lee localStorage una vez al montar.
-  // Ya no hay useEffect duplicado que vuelva a leer y sobrescriba.
   const [messages, setMessages] = useState(loadHistoryFromStorage);
   const [isLoading, setIsLoading] = useState(false);
   const [inputValue, setInputValue] = useState('');
