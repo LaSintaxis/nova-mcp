@@ -121,15 +121,3 @@
   justify-content: center;
   gap: 1rem;
 }
-
-/*circulito de pueba de conexion al MCP*/
-.input-footer p::before {
-  content: '';
-  width: 8px;
-  height: 8px;
-  margin-right: 0.4rem;
-  background: #00c853;
-  border-radius: 50%;
-  display: inline-block;
-  box-shadow: 0 0 6px #00c853;
-}

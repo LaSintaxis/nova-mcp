@@ -1,10 +1,8 @@
-// mcp-sql/index.js
 // Microservicio MCP para SQL Server
 // Lee todos los servidores del .env con prefijo SQL_SERVER_
 // Un mismo usuario/contraseña para todos los servidores
 
 import express from 'express';
-import { createRequire } from 'module';
 import dotenv from 'dotenv';
 import sql from 'mssql';
 
@@ -150,7 +148,7 @@ app.post('/query', async (req, res) => {
     return res.status(400).json({ error: 'Campos server, database y query son requeridos' });
   }
 
-  // Seguridad básica: solo SELECT permitido (hasta que se implemente autorización por AD)
+  // Seguridad básica: solo SELECT permitido 
   // const trimmed = query.trim().toUpperCase();
   // if (!trimmed.startsWith('SELECT') && !trimmed.startsWith('WITH')) {
   //   return res.status(403).json({

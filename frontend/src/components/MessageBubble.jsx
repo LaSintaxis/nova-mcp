@@ -1,4 +1,3 @@
-import MetricsChart from './MetricsChart'
 import '../styles/MessageBubble.css'
 
 const MessageBubble = ({ message }) => {
@@ -89,11 +88,7 @@ const MessageBubble = ({ message }) => {
           })}
         </div>
         
-        {/* Placeholder para gráficas (cuando el backend las envíe) */}
-        {message.chartData && (
-          <MetricsChart data={message.chartData} isUser={isUser} />
-        )}
-        
+                
         {/* Metadata opcional */}
         {message.metadata && (
           <div className="message-metadata">

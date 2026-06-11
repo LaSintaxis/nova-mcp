@@ -8,7 +8,7 @@ import { apiTokenRequest } from '../auth/msalConfig';
 
 const GATEWAY_URL = import.meta.env.VITE_GATEWAY_URL || 'http://localhost:3000';
 const HISTORY_TURNS = Number(import.meta.env.VITE_HISTORY_TURNS) || 3;
-const MAX_MESSAGE_CHARS = Number(import.meta.env.VITE_MAX_MESSAGE_CHARS) || 800;
+const MAX_MESSAGE_CHARS = Number(import.meta.env.VITE_MAX_MESSAGE_CHARS) || 1000;
 
 const WELCOME_MESSAGE = {
   id: 1,
@@ -111,32 +111,6 @@ const ChatInterface = () => {
       if (!token) throw new Error('No se pudo obtener token de autenticación');
 
       // Historial reducido (últimos N turnos) para ahorrar tokens
-      function sliceLastNTurns(messagesArr, turns) {
-        const rev = [...messagesArr].reverse();
-        const groups = [];
-        let i = 0;
-        while (i < rev.length && groups.length < turns) {
-          if (rev[i].role === 'assistant') {
-            const assistant = rev[i];
-            const user = rev[i + 1];
-            if (user && user.role === 'user') {
-              groups.push([user, assistant]);
-              i += 2;
-            } else {
-              groups.push([assistant]);
-              i += 1;
-            }
-          } else if (rev[i].role === 'user') {
-            groups.push([rev[i]]);
-            i += 1;
-          } else {
-            groups.push([rev[i]]);
-            i += 1;
-          }
-        }
-        return groups.flat().reverse();
-      }
-
       const history = sliceLastNTurns([...messages, userMessage], HISTORY_TURNS)
         .map(({ role, content }) => ({
           role,
@@ -155,9 +129,6 @@ const ChatInterface = () => {
         body: JSON.stringify({
           message: userQuestion,
           context: { history }
-          // BUG 4 PREP: en modo SSO real, el user vendrá del token en el backend.
-          // En modo cliente con usuario/contraseña, el token se decodifica en el backend.
-          // No enviar datos de usuario desde el frontend — siempre del token validado.
         })
       });
 
@@ -223,7 +194,6 @@ const ChatInterface = () => {
         metadata: {
           source: data.source,
           duration_ms: Date.now() - userMessage.id,
-          // BUG 4 PREP: cuando tengamos auth, mostrar qué servidor/bd se consultó
           server: data.metadata?.server,
           database: data.metadata?.database
         }

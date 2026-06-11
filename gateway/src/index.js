@@ -1,4 +1,3 @@
-// gateway/index.js
 // Orquestador IA — recibe mensajes del frontend, razona con Azure OpenAI
 // y delega acciones al microservicio mcp-sql (y futuros mcp-)
 
@@ -21,8 +20,7 @@ app.use(express.json());
 app.use(authMiddleware);
 
 
-const MAX_MESSAGE_CHARS = Number(process.env.MAX_MESSAGE_CHARS) || 800;
-
+const MAX_MESSAGE_CHARS = Number(process.env.MAX_MESSAGE_CHARS) || 1000;
 // ─────────────────────────────────────────
 // CLIENTE AZURE OPENAI
 // ─────────────────────────────────────────
@@ -226,7 +224,6 @@ app.post('/chat', async (req, res) => {
 
   // Construir historial de mensajes para OpenAI
   const history = context?.history || [];
-  const HISTORY_TURNS = Number(process.env.HISTORY_TURNS) || 3; 
   const SEND_SYSTEM_PROMPT = process.env.SEND_SYSTEM_PROMPT === 'true'; // si Foundry tiene el system prompt, cambiar a false para no enviarlo redundante en cada petición
   // Confiar en el historial enviado por el frontend (ya viene recortado por turnos).
   const messages = [
@@ -257,8 +254,7 @@ app.post('/chat', async (req, res) => {
       // Instrumentación por petición: id, tamaño estimado y número de mensajes
       const requestId = `${Date.now()}-${Math.random().toString(36).slice(2,8)}`;
       const totalChars = messages.reduce((s, m) => s + ((m.content && typeof m.content === 'string') ? m.content.length : 0), 0);
-      const estimatedPromptTokens = Math.ceil(totalChars / 4); // heurística: ~4 chars/token
-      console.log(`[gateway][${requestId}] sending to model: messages=${messages.length} turns=${HISTORY_TURNS} chars=${totalChars} est_prompt_tokens=${estimatedPromptTokens}`);
+      const estimatedPromptTokens = Math.ceil(totalChars / 4); // heurística: ~4 chars/tokenest_prompt_tokens=${estimatedPromptTokens}`);
 
       const completion = await openai.chat.completions.create({
         model: process.env.AZURE_OPENAI_DEPLOYMENT,
@@ -374,10 +370,6 @@ app.post('/chat', async (req, res) => {
     });
   }
 });
-
-
-
-
 
 
 
