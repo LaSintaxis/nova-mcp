@@ -200,6 +200,53 @@ app.get('/schema', async (req, res) => {
   }
 });
 
+
+
+
+
+// ─────────────────────────────────────────
+// AGENTE SQL SERVER: LISTAR TRABAJOS (JOBS)
+// GET /agent/jobs?server=01
+// ─────────────────────────────────────────
+app.get('/agent/jobs', async (req, res) => {
+  const { server } = req.query;
+  if (!server) return res.status(400).json({ error: 'Parámetro server requerido' });
+
+  try {
+    const pool = await getPool(server);
+    // Consultamos la tabla sysjobs en la base de datos msdb
+    const result = await pool.request().query(`
+      SELECT job_id, name, enabled, description, date_created 
+      FROM msdb.dbo.sysjobs
+      ORDER BY name
+    `);
+    res.json({ server, jobs: result.recordset });
+  } catch (err) {
+    console.error(`[mcp-sql] Error obteniendo jobs en ${server}:`, err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ─────────────────────────────────────────
+// AGENTE SQL SERVER: LEER REGISTROS DE ERRORES
+// GET /agent/error-logs?server=01
+// ─────────────────────────────────────────
+app.get('/agent/error-logs', async (req, res) => {
+  const { server } = req.query;
+  if (!server) return res.status(400).json({ error: 'Parámetro server requerido' });
+
+  try {
+    const pool = await getPool(server);
+    // sp_readerrorlog 0, 2 lee el log actual (0) del Agente SQL Server (2)
+    const result = await pool.request().query(`EXEC sys.sp_readerrorlog 0, 2;`);
+    res.json({ server, logs: result.recordset });
+  } catch (err) {
+    console.error(`[mcp-sql] Error leyendo logs del agente en ${server}:`, err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+
 const PORT = process.env.MCP_SQL_PORT || 3002;
 app.listen(PORT, () => {
   console.log(`[mcp-sql] Corriendo en http://localhost:${PORT}`);

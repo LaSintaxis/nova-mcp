@@ -4,10 +4,11 @@ import '../styles/MessageList.css'
 
 const MessageList = ({ messages, isLoading }) => {
   const messagesEndRef = useRef(null)
+  const messageCount = messages.length
 
   useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
-  }, [messages, isLoading])
+    messagesEndRef.current?.scrollIntoView({ behavior: 'auto' })
+  }, [messageCount])
 
   return (
     <div className="message-list">

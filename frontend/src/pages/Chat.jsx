@@ -64,12 +64,10 @@ const ChatInterface = () => {
   const { instance, accounts } = useMsal();
   const navigate = useNavigate();
 
-  // Guardar historial en localStorage cuando cambian los mensajes
+  // Guardar todo el historial en localStorage para que persista al refrescar la página
   useEffect(() => {
     try {
-      const toSave = sliceLastNTurns(messages, HISTORY_TURNS);
-      // Si no hay nada, guardar el mensaje de bienvenida
-      const finalSave = (Array.isArray(toSave) && toSave.length > 0) ? toSave : [WELCOME_MESSAGE];
+      const finalSave = Array.isArray(messages) && messages.length > 0 ? messages : [WELCOME_MESSAGE];
       localStorage.setItem('chat_history', JSON.stringify(finalSave));
     } catch (err) {
       console.warn('¿Error guardando historial:', err);

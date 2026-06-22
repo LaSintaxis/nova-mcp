@@ -33,7 +33,7 @@ const openai = new AzureOpenAI({
 
 // ─────────────────────────────────────────
 // URLS DE MICROSERVICIOS
-// Agregar futuros: MCP_AZURE_MONITOR_URL, MCP_DEVOPS_URL, etc.
+// Agregar futuros: MCP_
 // ─────────────────────────────────────────
 const MCP_SQL_URL = process.env.MCP_SQL_URL || 'http://localhost:3002';
 
@@ -120,6 +120,35 @@ const MCP_TOOLS = [
     },
   },
 
+  {
+    type: 'function',
+    function: {
+      name: 'list_sql_agent_jobs',
+      description: 'Lista los trabajos (jobs) configurados en el Agente SQL Server de un servidor específico. Muestra si están habilitados y su descripción.',
+      parameters: {
+        type: 'object',
+        required: ['server'],
+        properties: {
+          server: { type: 'string', description: 'Alias del servidor.' },
+        },
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'read_sql_agent_error_logs',
+      description: 'Lee los registros de errores actuales del Agente SQL Server. Úsala para diagnosticar problemas con el agente o trabajos fallidos.',
+      parameters: {
+        type: 'object',
+        required: ['server'],
+        properties: {
+          server: { type: 'string', description: 'Alias del servidor.' },
+        },
+      },
+    },
+  },
+
 ];
 
 // ─────────────────────────────────────────
@@ -157,6 +186,15 @@ async function executeTool(toolName, args) {
         });
         return await res.json();
       }
+      case 'list_sql_agent_jobs': {
+        const res = await fetch(`${MCP_SQL_URL}/agent/jobs?server=${encodeURIComponent(args.server)}`);
+        return await res.json();
+      }
+      case 'read_sql_agent_error_logs': {
+        const res = await fetch(`${MCP_SQL_URL}/agent/error-logs?server=${encodeURIComponent(args.server)}`);
+        return await res.json();
+      }
+
       default:
         return { error: `Herramienta desconocida: ${toolName}` };
     }
@@ -185,6 +223,7 @@ REGLAS IMPORTANTES:
 5. Cuando muestres resultados, sé conciso. Si hay muchas filas, resume los datos más importantes.
 6. Responde siempre en español.
 7. NO inventes nombres de tablas o columnas — siempre consulta el schema primero.
+8. Puedes consultar el estado y los errores del Agente SQL Server si el usuario te lo solicita
 
 Fecha actual: ${new Date().toLocaleDateString('es-CO', { timeZone: 'America/Bogota' })}`;
 }
@@ -224,17 +263,17 @@ app.post('/chat', async (req, res) => {
 
   // Construir historial de mensajes para OpenAI
   const history = context?.history || [];
-  const SEND_SYSTEM_PROMPT = process.env.SEND_SYSTEM_PROMPT === 'true'; // si Foundry tiene el system prompt, cambiar a false para no enviarlo redundante en cada petición
+  const SEND_SYSTEM_PROMPT = process.env.SEND_SYSTEM_PROMPT === 'true'; 
   // Confiar en el historial enviado por el frontend (ya viene recortado por turnos).
   const messages = [
     ...(SEND_SYSTEM_PROMPT ? [{ role: 'system', content: buildSystemPrompt() }] : []),
     ...(Array.isArray(history) && history.length
       ? history.map(m => ({
-          role: m.role,
-          content: typeof m.content === 'string' && m.content.length > MAX_MESSAGE_CHARS
-            ? m.content.slice(0, MAX_MESSAGE_CHARS) + '...TRUNCATED...'
-            : m.content,
-        }))
+        role: m.role,
+        content: typeof m.content === 'string' && m.content.length > MAX_MESSAGE_CHARS
+          ? m.content.slice(0, MAX_MESSAGE_CHARS) + '...TRUNCATED...'
+          : m.content,
+      }))
       : []),
   ];
 
@@ -252,7 +291,7 @@ app.post('/chat', async (req, res) => {
       iterations++;
 
       // Instrumentación por petición: id, tamaño estimado y número de mensajes
-      const requestId = `${Date.now()}-${Math.random().toString(36).slice(2,8)}`;
+      const requestId = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
       const totalChars = messages.reduce((s, m) => s + ((m.content && typeof m.content === 'string') ? m.content.length : 0), 0);
       const estimatedPromptTokens = Math.ceil(totalChars / 4); // heurística: ~4 chars/tokenest_prompt_tokens=${estimatedPromptTokens}`);
 
