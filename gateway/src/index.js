@@ -229,6 +229,49 @@ Fecha actual: ${new Date().toLocaleDateString('es-CO', { timeZone: 'America/Bogo
 }
 
 // ─────────────────────────────────────────
+// DETECCIÓN DE INTENCIÓN DE GRÁFICA
+// Usa el mismo modelo para interpretar si el usuario quiere visualizar datos.
+// Devuelve true/false. Si falla, por defecto false (no graficar).
+// ─────────────────────────────────────────
+async function userWantsChart(message, history = []) {
+  try {
+    // Incluir los últimos 2 turnos de historial para dar contexto
+    // (ej: "sí, grafícalos" requiere saber qué se habló antes)
+    const contextMessages = history.slice(-4).map(m => ({
+      role: m.role,
+      content: typeof m.content === 'string'
+        ? m.content.slice(0, 300) // resumido para no gastar tokens
+        : '',
+    }));
+
+    const completion = await openai.chat.completions.create({
+      model: process.env.AZURE_OPENAI_DEPLOYMENT,
+      max_tokens: 5,
+      temperature: 0,
+      messages: [
+        {
+          role: 'system',
+          content:
+            'Eres un clasificador. Responde SOLO con "si" o "no", sin puntuación ni explicación.',
+        },
+        ...contextMessages,
+        {
+          role: 'user',
+          content: `¿El siguiente mensaje indica que el usuario quiere ver una gráfica, chart, visualización o diagrama de datos? Mensaje: "${message}"`,
+        },
+      ],
+    });
+
+    const answer = completion.choices[0]?.message?.content?.trim().toLowerCase() ?? 'no';
+    console.log(`[gateway] userWantsChart("${message}") → "${answer}"`);
+    return answer === 'si' || answer === 'sí';
+  } catch (err) {
+    console.warn('[gateway] userWantsChart falló, asumiendo false:', err.message);
+    return false;
+  }
+}
+
+// ─────────────────────────────────────────
 // DETECCIÓN DE SI EL RESULTADO PUEDE
 // VISUALIZARSE COMO GRÁFICA
 // ─────────────────────────────────────────
@@ -263,7 +306,7 @@ app.post('/chat', async (req, res) => {
 
   // Construir historial de mensajes para OpenAI
   const history = context?.history || [];
-  const SEND_SYSTEM_PROMPT = process.env.SEND_SYSTEM_PROMPT === 'true'; 
+  const SEND_SYSTEM_PROMPT = process.env.SEND_SYSTEM_PROMPT === 'true';
   // Confiar en el historial enviado por el frontend (ya viene recortado por turnos).
   const messages = [
     ...(SEND_SYSTEM_PROMPT ? [{ role: 'system', content: buildSystemPrompt() }] : []),
@@ -287,13 +330,18 @@ app.post('/chat', async (req, res) => {
     let iterations = 0;
     const MAX_ITERATIONS = 10; // seguridad anti-loop infinito
 
+    // Variable para guardar el resultado RAW de execute_sql_query sin truncar
+    let lastSqlRawResult = null;
+    let lastSqlMetadata = null;
+
     while (iterations < MAX_ITERATIONS) {
       iterations++;
 
       // Instrumentación por petición: id, tamaño estimado y número de mensajes
       const requestId = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
       const totalChars = messages.reduce((s, m) => s + ((m.content && typeof m.content === 'string') ? m.content.length : 0), 0);
-      const estimatedPromptTokens = Math.ceil(totalChars / 4); // heurística: ~4 chars/tokenest_prompt_tokens=${estimatedPromptTokens}`);
+      const estimatedPromptTokens = Math.ceil(totalChars / 4);
+      console.log(`[gateway][${requestId}] iter=${iterations} msgs=${messages.length} est_prompt_tokens=${estimatedPromptTokens}`);
 
       const completion = await openai.chat.completions.create({
         model: process.env.AZURE_OPENAI_DEPLOYMENT,
@@ -301,7 +349,7 @@ app.post('/chat', async (req, res) => {
         tools: MCP_TOOLS,
         tool_choice: 'auto',
         max_tokens: Number(process.env.MAX_TOKENS) || 512,
-        temperature: 0.1, // bajo para respuestas más deterministas
+        temperature: 0.1,
       });
 
       console.log(`[gateway][${requestId}] completion.usage:`, completion.usage);
@@ -311,7 +359,7 @@ app.post('/chat', async (req, res) => {
       const choice = completion.choices[0];
       let assistantMessage = choice.message;
 
-      // Truncar la respuesta del asistente si es muy larga para evitar inflar el prompt
+      // Truncar la respuesta del asistente si es muy larga
       if (assistantMessage?.content && assistantMessage.content.length > MAX_MESSAGE_CHARS) {
         assistantMessage = {
           ...assistantMessage,
@@ -319,44 +367,35 @@ app.post('/chat', async (req, res) => {
         };
       }
 
-      // Agregar respuesta del asistente al historial de la sesión
       messages.push(assistantMessage);
 
       // Si no hay tool calls, el modelo terminó — devolver respuesta final
       if (choice.finish_reason !== 'tool_calls' || !assistantMessage.tool_calls?.length) {
         const responseText = assistantMessage.content || 'No se pudo generar una respuesta.';
 
-        // Intentar extraer metadata del último tool call de SQL ejecutado
-        const lastSqlCall = [...messages]
-          .reverse()
-          .find(m => m.role === 'tool' && m.tool_call_type === 'execute_sql_query');
-
-        // Intentar adjuntar datos de la última llamada SQL (si existe) y sugerir gráfico
         let extra = {};
-        if (lastSqlCall && lastSqlCall.content) {
-          try {
-            const parsed = JSON.parse(lastSqlCall.content);
-            // El microservicio mcp-sql devuelve { success, server, database, rowCount, data }
-            if (parsed && parsed.data && Array.isArray(parsed.data)) {
-              const chartInfo = analyzeChartPossibility(parsed.data);
-              extra = {
-                data: parsed.data,
-                rowCount: parsed.rowCount ?? parsed.data.length ?? 0,
-                chartSuggestion: chartInfo,
-                wantsChart: chartInfo.possible === true,
-              };
-            }
-          } catch (e) {
-            // no hacer nada si no es JSON
-            console.warn('[gateway] no se pudo parsear lastSqlCall.content para adjuntar data:', e.message);
-          }
+        if (lastSqlRawResult?.data && Array.isArray(lastSqlRawResult.data)) {
+          const chartInfo = analyzeChartPossibility(lastSqlRawResult.data);
+
+          // Preguntar al modelo si el usuario quiso una gráfica, pasando historial para contexto
+          const chartRequested = chartInfo.possible
+            ? await userWantsChart(message, history)
+            : false;
+
+          extra = {
+            data: lastSqlRawResult.data,
+            rowCount: lastSqlRawResult.rowCount ?? lastSqlRawResult.data.length,
+            chartSuggestion: chartInfo,
+            wantsChart: chartRequested,
+          };
         }
 
+        
         return res.json({
           type: 'success',
           response: responseText,
           source: 'azure-openai',
-          metadata: lastSqlCall?.metadata || null,
+          metadata: lastSqlMetadata || null,
           ...extra,
         });
       }
@@ -375,24 +414,25 @@ app.post('/chat', async (req, res) => {
           const resultStr = JSON.stringify(result);
           console.log(`[gateway][${requestId}] Tool result: ${toolName} (chars=${resultStr.length})`);
 
-          // Truncar el contenido de la herramienta antes de añadirlo al historial para evitar inflar el prompt
-          const truncated = resultStr.length > MAX_MESSAGE_CHARS ? resultStr.slice(0, MAX_MESSAGE_CHARS) + '...TRUNCATED...' : resultStr;
+          // Guardar el resultado RAW antes de truncar para usarlo al final
+          if (toolName === 'execute_sql_query') {
+            lastSqlRawResult = result;
+            lastSqlMetadata = { server: args.server, database: args.database };
+          }
+
+          // Truncar solo el contenido que se manda a OpenAI
+          const truncated = resultStr.length > MAX_MESSAGE_CHARS
+            ? resultStr.slice(0, MAX_MESSAGE_CHARS) + '...TRUNCATED...'
+            : resultStr;
 
           return {
             role: 'tool',
             tool_call_id: toolCall.id,
             content: truncated,
-            // metadata para enriquecer la respuesta final (no se manda a OpenAI como parte del objeto)
-            tool_call_type: toolName,
-            metadata:
-              toolName === 'execute_sql_query'
-                ? { server: args.server, database: args.database }
-                : null,
           };
         })
       );
 
-      // Agregar resultados de herramientas al historial
       messages.push(...toolResults);
     }
 
