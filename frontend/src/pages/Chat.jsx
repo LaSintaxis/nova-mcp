@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useMsal } from '@azure/msal-react';
 import { useNavigate } from 'react-router-dom';
 import ChatHeader from '../components/ChatHeader';
@@ -60,9 +60,16 @@ const ChatInterface = () => {
   const [messages, setMessages] = useState(loadHistoryFromStorage);
   const [isLoading, setIsLoading] = useState(false);
   const [inputValue, setInputValue] = useState('');
+  const inputRef = useRef(null);
 
   const { instance, accounts } = useMsal();
   const navigate = useNavigate();
+
+  useEffect(() => {
+    if (!isLoading) {
+      inputRef.current?.focus();
+    }
+  }, [isLoading]);
 
   // Guardar todo el historial en localStorage para que persista al refrescar la página
   useEffect(() => {
@@ -210,6 +217,7 @@ const ChatInterface = () => {
       />
       <MessageList messages={messages} isLoading={isLoading} />
       <MessageInput
+        ref={inputRef}
         value={inputValue}
         onChange={setInputValue}
         onSend={handleSend}
