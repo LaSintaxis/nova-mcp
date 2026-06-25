@@ -1,4 +1,6 @@
 import '../styles/MessageBubble.css'
+// ✅ FIX 3: importar MetricsChart
+import MetricsChart from './MetricsChart'
 
 const MessageBubble = ({ message }) => {
   const isUser = message.role === 'user'
@@ -48,7 +50,7 @@ const MessageBubble = ({ message }) => {
   }
 
   const blocks = parseContentBlocks(message.content)
-  
+
   return (
     <div className={`message-bubble ${isUser ? 'user' : 'assistant'}`}>
       <div className="message-content">
@@ -87,8 +89,12 @@ const MessageBubble = ({ message }) => {
             )
           })}
         </div>
-        
-                
+
+        {/* ✅ FIX 3: renderizar la gráfica si el mensaje trae chartData */}
+        {message.chartData && (
+          <MetricsChart data={message.chartData} isUser={isUser} />
+        )}
+
         {/* Metadata opcional */}
         {message.metadata && (
           <div className="message-metadata">

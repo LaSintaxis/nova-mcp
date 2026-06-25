@@ -137,37 +137,19 @@ const ChatInterface = () => {
 
       const data = await response.json();
       let assistantContent = '';
+      // ✅ FIX 2: chartData declarado fuera de los bloques if para poder asignarlo siempre
       let chartData = null;
 
       if (data.type === 'success') {
-        if (data.response) {
-          assistantContent = data.response;
-        } else if (data.message) {
-          assistantContent = data.message;
-        } else if (data.data && Array.isArray(data.data) && data.data.length > 0) {
-          assistantContent = `📊 **Resultado de la consulta:**\n\nSe encontraron ${data.data.length} registros.\n\n`;
+        assistantContent = data.response || data.message || '✅ Consulta ejecutada correctamente.';
 
-          const headers = Object.keys(data.data[0]);
-          assistantContent += `| ${headers.join(' | ')} |\n`;
-          assistantContent += `|${headers.map(() => '---').join('|')}|\n`;
-
-          data.data.slice(0, 5).forEach(row => {
-            assistantContent += `| ${headers.map(h => String(row[h] ?? '-').slice(0, 30)).join(' | ')} |\n`;
-          });
-
-          if (data.data.length > 5) {
-            assistantContent += `\n*... y ${data.data.length - 5} registros más.*\n`;
-          }
-
-          if (data.wantsChart || data.chartSuggestion?.possible) {
-            chartData = {
-              title: 'Resultados de la consulta',
-              data: data.data,
-              chartSuggestion: data.chartSuggestion
-            };
-          }
-        } else {
-          assistantContent = '✅ Consulta ejecutada correctamente.';
+        // ✅ FIX 2: asignar chartData independientemente de si hay texto en data.response
+        if (data.wantsChart && data.data?.length) {
+          chartData = {
+            title: 'Resultados de la consulta',
+            data: data.data,
+            chartSuggestion: data.chartSuggestion,
+          };
         }
 
       } else if (data.type === 'ambiguity') {
