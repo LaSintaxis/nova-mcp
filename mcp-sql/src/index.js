@@ -229,7 +229,7 @@ app.get('/agent/jobs', async (req, res) => {
 
 // ─────────────────────────────────────────
 // AGENTE SQL SERVER: LEER REGISTROS DE ERRORES
-// GET /agent/error-logs?server=01
+// GET /agent/error-logs?server=#servidor
 // ─────────────────────────────────────────
 app.get('/agent/error-logs', async (req, res) => {
   const { server } = req.query;
